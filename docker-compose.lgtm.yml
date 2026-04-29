@@ -1,0 +1,35 @@
+# Grafana LGTM — true all-in-one OTel stack for local validation.
+# Includes: OpenTelemetry Collector, Grafana UI, Loki (logs),
+#           Tempo (traces), Prometheus (metrics).
+#
+# Usage:
+#   podman compose -f docker-compose.lgtm.yml up
+#   # wait ~15 s, then run chromancy:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+#     OTEL_SERVICE_NAME=chromancy \
+#     RUST_LOG=info \
+#     cargo run -- wled-config.toml
+#   # open Grafana UI: http://localhost:3000 (admin / admin)
+#   #   Explore → Tempo   → traces
+#   #   Explore → Loki    → logs  (label: service_name = chromancy)
+#   #   Explore → Metrics → mcp_tool_calls_total, wled_requests_total, ...
+#
+#   podman compose -f docker-compose.lgtm.yml down
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: lgtm
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP gRPC  (traces, metrics, logs)
+      - "4318:4318"   # OTLP HTTP  (traces, metrics, logs)
+      - "9090:9090"   # Prometheus (direct query access)
+    volumes:
+      - lgtm_data:/data
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/dashboards/chromancy.yaml:/etc/grafana/provisioning/dashboards/chromancy.yaml:ro
+    restart: unless-stopped
+
+volumes:
+  lgtm_data:
