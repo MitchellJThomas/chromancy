@@ -1,4 +1,4 @@
-# A Rust Client to control a fleet of WLED controllers
+# A Rust client to control a fleet of WLED controllers
 Hey there! You are visiting Chromancy, my personal artistic project using AI coding agents to build a framework to control many WLED controllers. 
 
 The ideal end result is a tool or set of tools that allow a human or an AI agent to artistically co-ordinate many (a fleet) of [WLED](https://kno.wled.ge) controllers. 
