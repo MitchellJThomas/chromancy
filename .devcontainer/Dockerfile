@@ -2,9 +2,9 @@ FROM cgr.dev/chainguard/rust:latest-dev
 
 USER root
 
-RUN apk add --no-cache fish curl
+RUN apk add --no-cache fish curl nodejs npm
 
-RUN curl -fsSL https://pi.dev/install.sh | sh && \
-    cp /root/.local/bin/* /usr/local/bin/
+RUN npm install -g @mariozechner/pi-coding-agent
 
 USER nonroot
+ENTRYPOINT /bin/fish
