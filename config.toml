@@ -1,0 +1,9 @@
+# config.toml
+[devices]
+living_room = "192.168.1.101"
+bedroom = "192.168.1.102"
+kitchen = "192.168.1.103"
+
+[server]
+name = "wled-mcp-server"
+version = "0.1.0"
