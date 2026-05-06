@@ -2,7 +2,7 @@ FROM cgr.dev/chainguard/rust:latest-dev
 
 USER root
 
-RUN apk add --no-cache fish curl nodejs npm
+RUN apk add --no-cache fish curl nodejs npm openssl-dev
 
 RUN npm install -g @mariozechner/pi-coding-agent
 
