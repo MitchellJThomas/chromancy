@@ -1,0 +1,49 @@
+# Define multiple sync groups
+[[sync_groups]]
+name = "main_house"
+leader = "wled-1"
+
+[[sync_groups.devices]]
+name = "wled-1"
+address = "192.168.1.101"
+is_leader = true
+device_type = "DigQuad"
+
+[[sync_groups.devices]]
+name = "wled-2"
+address = "192.168.1.102"
+is_leader = false
+device_type = "DigUno"
+
+[[sync_groups.devices]]
+name = "wled-3"
+address = "192.168.1.103"
+is_leader = false
+device_type = "Dig2Go"
+
+[[sync_groups]]
+name = "patio"
+leader = "wled-4"
+
+[[sync_groups.devices]]
+name = "wled-4"
+address = "192.168.1.104"
+is_leader = true
+device_type = "DigUno"
+
+[[sync_groups.devices]]
+name = "wled-5"
+address = "192.168.1.105"
+is_leader = false
+device_type = "Dig2Go"
+
+[[sync_groups.devices]]
+name = "wled-6"
+address = "192.168.1.106"
+is_leader = false
+device_type = "Dig2Go"
+
+[schedule]
+enabled = true
+dusk_preset = "Evening Mode"
+off_time = "00:30"
