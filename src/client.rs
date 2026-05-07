@@ -550,12 +550,6 @@ impl WledClient {
         }
     }
 
-    pub async fn mock_get_presets(&self) -> Option<HashMap<i32, PresetInfo>> {
-        match self.inner.as_ref() {
-            ClientKind::Mock(i) => Some(i.presets.read().await.clone()),
-            _ => None,
-        }
-    }
 }
 
 // ── Builder types ─────────────────────────────────────────────────────────────

@@ -181,10 +181,6 @@ pub struct WledStateRequest {
     /// Activate playlist by slot
     #[serde(rename = "pl", skip_serializing_if = "Option::is_none")]
     pub playlist_slot: Option<i32>,
-    #[serde(rename = "nl", skip_serializing_if = "Option::is_none")]
-    pub nightlight: Option<NightlightRequest>,
-    #[serde(rename = "udpn", skip_serializing_if = "Option::is_none")]
-    pub udp_sync: Option<UdpSyncRequest>,
     #[serde(rename = "lor", skip_serializing_if = "Option::is_none")]
     pub live_override: Option<u8>,
     #[serde(rename = "mainseg", skip_serializing_if = "Option::is_none")]
@@ -194,26 +190,6 @@ pub struct WledStateRequest {
     /// Return updated state in response
     #[serde(rename = "v", skip_serializing_if = "Option::is_none")]
     pub return_state: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NightlightRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub on: Option<bool>,
-    #[serde(rename = "dur", skip_serializing_if = "Option::is_none")]
-    pub duration_minutes: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<u8>,
-    #[serde(rename = "tbri", skip_serializing_if = "Option::is_none")]
-    pub target_brightness: Option<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UdpSyncRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub send: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recv: Option<bool>,
 }
 
 /// Partial segment update.
