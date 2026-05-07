@@ -22,13 +22,6 @@ pub enum WledError {
     #[error("Preset not found: '{0}'")]
     PresetNotFound(String),
 
-    #[error("Sync drift on device '{device}': expected preset '{expected}', got '{actual}'")]
-    SyncDrift {
-        device: String,
-        expected: String,
-        actual: String,
-    },
-
     #[error("Invalid channel {channel} for device '{device}': max is {max_channels}")]
     InvalidChannel {
         device: String,

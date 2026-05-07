@@ -815,3 +815,85 @@ mod tests {
         assert_eq!(client.device_name(), "192.168.1.100");
     }
 }
+
+// ── HTTP error tests (wiremock) ───────────────────────────────────────────────
+
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Helper that builds an HTTP client pointed at the wiremock server.
+    fn client_for(server: &MockServer) -> WledClient {
+        WledClient::builder(server.uri())
+            .device_name("wiremock-device")
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_api_error_returns_status_code() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await;
+        assert!(
+            matches!(result, Err(WledError::Api { status: 500, .. })),
+            "expected Api(500), got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_network_error_on_invalid_json_body() {
+        let server = MockServer::start().await;
+        // Server returns 200 OK but the body is not valid JSON.
+        // reqwest's json() decoder fails → WledError::Network (retried once).
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await;
+        assert!(
+            matches!(result, Err(WledError::Network { .. })),
+            "expected Network, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_timeout_when_server_is_slow() {
+        let server = MockServer::start().await;
+        // Server delays longer than the client's timeout.
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(300)),
+            )
+            .mount(&server)
+            .await;
+
+        // Short timeout so the test completes quickly (retried once = ~200 ms
+        // of actual waiting plus the 500 ms RETRY_DELAY between attempts).
+        let client = WledClient::builder(server.uri())
+            .device_name("wiremock-device")
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .unwrap();
+
+        let result = client.get_state().await;
+        assert!(
+            matches!(result, Err(WledError::Timeout)),
+            "expected Timeout, got {:?}",
+            result
+        );
+    }
+}
