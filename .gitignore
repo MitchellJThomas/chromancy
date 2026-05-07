@@ -3,6 +3,12 @@
 debug
 target
 
+# Real device config — contains IP addresses; commit wled-config.toml.example instead
+wled-config.toml
+
+# Claude Code session artifacts
+next-session-prompt.txt
+
 # emacs Backup files: Emacs creates these by saving a copy of the file with a tilde appended before overwriting the original.
 *~
 # emacs Auto-save files: These are files Emacs creates automatically so you can recover data if the system crashes.
