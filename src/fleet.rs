@@ -184,7 +184,7 @@ impl WledFleet {
             let (group_name, leader_name, device_count, state_result) =
                 res.expect("task panicked");
             let (on, brightness, active_preset) = match state_result {
-                Ok(s) => (s.on, s.bri, s.ps),
+                Ok(s) => (s.on, s.brightness, s.preset_slot),
                 Err(e) => {
                     tracing::warn!(group = %group_name, error = %e, "Failed to get group status");
                     (false, 0, -1)

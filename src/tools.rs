@@ -170,8 +170,8 @@ impl ChromancyServer {
                 Ok(state) => json!({
                     "group": p.group_name,
                     "on": state.on,
-                    "brightness": state.bri,
-                    "active_preset": state.ps,
+                    "brightness": state.brightness,
+                    "active_preset": state.preset_slot,
                 })
                 .to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -223,7 +223,7 @@ impl ChromancyServer {
                 Ok(presets) => {
                     let list: Vec<serde_json::Value> = presets
                         .iter()
-                        .map(|(id, preset)| json!({"id": id, "name": preset.n}))
+                        .map(|(id, preset)| json!({"id": id, "name": preset.name}))
                         .collect();
                     serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
                 }

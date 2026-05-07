@@ -197,7 +197,7 @@ impl WledSyncGroup {
             });
         }
         let state = self.leader.client.get_state().await?;
-        let max_channels = state.seg.len() as u8;
+        let max_channels = state.segments.len() as u8;
         if channel > max_channels {
             return Err(WledError::InvalidChannel {
                 device: self.leader.name.clone(),
@@ -208,9 +208,9 @@ impl WledSyncGroup {
         self.leader
             .client
             .set_state(WledStateRequest {
-                seg: Some(vec![SegmentRequest {
+                segments: Some(vec![SegmentRequest {
                     id: Some(channel - 1),
-                    col: Some(vec![[r, g, b], [0, 0, 0], [0, 0, 0]]),
+                    colors: Some(vec![[r, g, b], [0, 0, 0], [0, 0, 0]]),
                     ..Default::default()
                 }]),
                 ..Default::default()
@@ -225,7 +225,7 @@ impl WledSyncGroup {
     /// Returns a report indicating which (if any) devices have drifted.
     pub async fn check_sync_health(&self) -> Result<SyncHealthReport, WledError> {
         let leader_state = self.leader.client.get_state().await?;
-        let leader_preset = leader_state.ps;
+        let leader_preset = leader_state.preset_slot;
 
         // Query all followers concurrently.
         let mut handles = tokio::task::JoinSet::new();
@@ -242,7 +242,7 @@ impl WledSyncGroup {
             let (device_name, state_result) = res.expect("task panicked");
             match state_result {
                 Ok(state) => {
-                    let healthy = state.ps == leader_preset;
+                    let healthy = state.preset_slot == leader_preset;
                     if !healthy {
                         all_healthy = false;
                     }
@@ -250,7 +250,7 @@ impl WledSyncGroup {
                         device_name,
                         is_healthy: healthy,
                         leader_preset,
-                        device_preset: state.ps,
+                        device_preset: state.preset_slot,
                     });
                 }
                 Err(e) => {
@@ -287,9 +287,9 @@ impl WledSyncGroup {
         let leader_state = self.leader.client.get_state().await?;
         let mut errors: Vec<String> = Vec::new();
 
-        if leader_state.ps >= 0 {
+        if leader_state.preset_slot >= 0 {
             // Activate the same preset on each follower.
-            let preset_id = leader_state.ps;
+            let preset_id = leader_state.preset_slot;
             let mut handles = tokio::task::JoinSet::new();
             for follower in &self.followers {
                 let client = follower.client.clone();
@@ -339,22 +339,22 @@ impl WledSyncGroup {
 fn leader_state_to_request(state: &WledState) -> WledStateRequest {
     WledStateRequest {
         on: Some(state.on),
-        bri: Some(state.bri),
+        brightness: Some(state.brightness),
         transition: Some(state.transition),
-        seg: Some(
+        segments: Some(
             state
-                .seg
+                .segments
                 .iter()
                 .enumerate()
                 .map(|(i, seg)| SegmentRequest {
                     id: Some(i as u8),
                     on: Some(seg.on),
-                    bri: Some(seg.bri),
-                    col: Some(seg.col.clone()),
-                    fx: Some(seg.fx),
-                    sx: Some(seg.sx),
-                    ix: Some(seg.ix),
-                    pal: Some(seg.pal),
+                    brightness: Some(seg.brightness),
+                    colors: Some(seg.colors.clone()),
+                    effect_id: Some(seg.effect_id),
+                    effect_speed: Some(seg.effect_speed),
+                    effect_intensity: Some(seg.effect_intensity),
+                    palette_id: Some(seg.palette_id),
                     ..Default::default()
                 })
                 .collect(),
@@ -374,23 +374,23 @@ mod tests {
             .with_device_name(name)
             .with_state(WledState {
                 on: true,
-                bri: 200,
-                ps: 3,
-                seg: vec![Segment {
+                brightness: 200,
+                preset_slot: 3,
+                segments: vec![Segment {
                     id: 0,
-                    col: vec![[255, 0, 0], [0, 0, 0], [0, 0, 0]],
+                    colors: vec![[255, 0, 0], [0, 0, 0], [0, 0, 0]],
                     ..Default::default()
                 }],
                 ..Default::default()
             })
-            .with_preset(3, PresetInfo { n: "Red Party".to_string(), ..Default::default() })
+            .with_preset(3, PresetInfo { name: "Red Party".to_string(), ..Default::default() })
             .build()
     }
 
     fn make_follower(name: &str, preset: i32) -> WledClient {
         WledClient::mock()
             .with_device_name(name)
-            .with_state(WledState { ps: preset, ..Default::default() })
+            .with_state(WledState { preset_slot: preset, ..Default::default() })
             .build()
     }
 
@@ -406,7 +406,7 @@ mod tests {
         let g = make_group();
         let state = g.get_state().await.unwrap();
         assert!(state.on);
-        assert_eq!(state.bri, 200);
+        assert_eq!(state.brightness, 200);
     }
 
     #[tokio::test]
@@ -420,14 +420,14 @@ mod tests {
     async fn test_group_set_brightness() {
         let g = make_group();
         g.set_brightness(50).await.unwrap();
-        assert_eq!(g.get_state().await.unwrap().bri, 50);
+        assert_eq!(g.get_state().await.unwrap().brightness, 50);
     }
 
     #[tokio::test]
     async fn test_group_activate_preset() {
         let g = make_group();
         g.activate_preset("Red Party").await.unwrap();
-        assert_eq!(g.get_state().await.unwrap().ps, 3);
+        assert_eq!(g.get_state().await.unwrap().preset_slot, 3);
     }
 
     #[tokio::test]
@@ -435,7 +435,7 @@ mod tests {
         let g = make_group();
         g.set_color(0, 255, 0).await.unwrap();
         let state = g.get_state().await.unwrap();
-        assert_eq!(state.seg[0].col[0], [0, 255, 0]);
+        assert_eq!(state.segments[0].colors[0], [0, 255, 0]);
     }
 
     #[tokio::test]
@@ -444,7 +444,7 @@ mod tests {
         g.set_effect("Blink").await.unwrap();
         let state = g.get_state().await.unwrap();
         // "Blink" is index 1 in the default mock effect list
-        assert_eq!(state.seg[0].fx, 1);
+        assert_eq!(state.segments[0].effect_id, 1);
     }
 
     #[tokio::test]
@@ -459,7 +459,7 @@ mod tests {
         let g = make_group();
         g.set_channel_color(1, 0, 0, 255).await.unwrap();
         let state = g.get_state().await.unwrap();
-        assert_eq!(state.seg[0].col[0], [0, 0, 255]);
+        assert_eq!(state.segments[0].colors[0], [0, 0, 255]);
     }
 
     #[tokio::test]
@@ -494,10 +494,10 @@ mod tests {
     async fn test_force_resync() {
         let g = make_group();
         g.force_resync().await.unwrap();
-        // After resync, follower-2 (ps=99) should now have ps=3
+        // After resync, follower-2 (preset_slot=99) should now have preset_slot=3
         let f2_state = g.get_follower("follower-2").unwrap()
             .get_state().await.unwrap();
-        assert_eq!(f2_state.ps, 3);
+        assert_eq!(f2_state.preset_slot, 3);
     }
 
     #[test]

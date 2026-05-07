@@ -305,7 +305,7 @@ impl WledClient {
 
     pub async fn set_brightness(&self, bri: u8) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            bri: Some(bri),
+            brightness: Some(bri),
             ..Default::default()
         })
         .await
@@ -314,9 +314,9 @@ impl WledClient {
     /// Sets the primary color on segment 0.
     pub async fn set_color(&self, r: u8, g: u8, b: u8) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            seg: Some(vec![SegmentRequest {
+            segments: Some(vec![SegmentRequest {
                 id: Some(0),
-                col: Some(vec![[r, g, b], [0, 0, 0], [0, 0, 0]]),
+                colors: Some(vec![[r, g, b], [0, 0, 0], [0, 0, 0]]),
                 ..Default::default()
             }]),
             ..Default::default()
@@ -327,9 +327,9 @@ impl WledClient {
     /// Sets the active effect by ID on segment 0.
     pub async fn set_effect(&self, effect_id: u16) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            seg: Some(vec![SegmentRequest {
+            segments: Some(vec![SegmentRequest {
                 id: Some(0),
-                fx: Some(effect_id),
+                effect_id: Some(effect_id),
                 ..Default::default()
             }]),
             ..Default::default()
@@ -340,9 +340,9 @@ impl WledClient {
     /// Sets the active palette by ID on segment 0.
     pub async fn set_palette(&self, palette_id: u16) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            seg: Some(vec![SegmentRequest {
+            segments: Some(vec![SegmentRequest {
                 id: Some(0),
-                pal: Some(palette_id),
+                palette_id: Some(palette_id),
                 ..Default::default()
             }]),
             ..Default::default()
@@ -372,48 +372,48 @@ impl WledClient {
                 if let Some(on) = request.on {
                     state.on = on;
                 }
-                if let Some(bri) = request.bri {
-                    state.bri = bri;
+                if let Some(bri) = request.brightness {
+                    state.brightness = bri;
                 }
                 if let Some(transition) = request.transition {
                     state.transition = transition;
                 }
-                if let Some(ps) = request.ps {
-                    state.ps = ps;
+                if let Some(ps) = request.preset_slot {
+                    state.preset_slot = ps;
                 }
-                if let Some(lor) = request.lor {
-                    state.lor = lor;
+                if let Some(lor) = request.live_override {
+                    state.live_override = lor;
                 }
-                if let Some(mainseg) = request.mainseg {
-                    state.mainseg = mainseg;
+                if let Some(mainseg) = request.main_segment {
+                    state.main_segment = mainseg;
                 }
-                if let Some(segs) = request.seg {
+                if let Some(segs) = request.segments {
                     for seg_req in segs {
                         let id = seg_req.id.unwrap_or(0) as usize;
-                        while state.seg.len() <= id {
-                            state.seg.push(Segment::default());
+                        while state.segments.len() <= id {
+                            state.segments.push(Segment::default());
                         }
-                        let seg = &mut state.seg[id];
+                        let seg = &mut state.segments[id];
                         if let Some(on) = seg_req.on {
                             seg.on = on;
                         }
-                        if let Some(bri) = seg_req.bri {
-                            seg.bri = bri;
+                        if let Some(bri) = seg_req.brightness {
+                            seg.brightness = bri;
                         }
-                        if let Some(col) = seg_req.col {
-                            seg.col = col;
+                        if let Some(col) = seg_req.colors {
+                            seg.colors = col;
                         }
-                        if let Some(fx) = seg_req.fx {
-                            seg.fx = fx;
+                        if let Some(fx) = seg_req.effect_id {
+                            seg.effect_id = fx;
                         }
-                        if let Some(sx) = seg_req.sx {
-                            seg.sx = sx;
+                        if let Some(sx) = seg_req.effect_speed {
+                            seg.effect_speed = sx;
                         }
-                        if let Some(ix) = seg_req.ix {
-                            seg.ix = ix;
+                        if let Some(ix) = seg_req.effect_intensity {
+                            seg.effect_intensity = ix;
                         }
-                        if let Some(pal) = seg_req.pal {
-                            seg.pal = pal;
+                        if let Some(pal) = seg_req.palette_id {
+                            seg.palette_id = pal;
                         }
                     }
                 }
@@ -436,7 +436,7 @@ impl WledClient {
     /// Activates a preset by slot ID.
     pub async fn activate_preset(&self, id: i32) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            ps: Some(id),
+            preset_slot: Some(id),
             ..Default::default()
         })
         .await
@@ -447,7 +447,7 @@ impl WledClient {
         let presets = self.list_presets().await?;
         let id = presets
             .iter()
-            .find(|(_, p)| p.n == name)
+            .find(|(_, p)| p.name == name)
             .map(|(id, _)| *id)
             .ok_or_else(|| WledError::PresetNotFound(name.to_string()))?;
         self.activate_preset(id).await
@@ -456,8 +456,8 @@ impl WledClient {
     /// Saves the current state to a preset slot with the given name.
     pub async fn save_preset(&self, slot: i32, name: &str) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            psave: Some(slot),
-            n: Some(name.to_string()),
+            preset_save_slot: Some(slot),
+            preset_name: Some(name.to_string()),
             ..Default::default()
         })
         .await
@@ -466,7 +466,7 @@ impl WledClient {
     /// Deletes a preset slot.
     pub async fn delete_preset(&self, slot: i32) -> Result<(), WledError> {
         self.set_state(WledStateRequest {
-            pdel: Some(slot),
+            preset_delete_slot: Some(slot),
             ..Default::default()
         })
         .await
@@ -694,20 +694,20 @@ mod tests {
             .with_device_name("test-device")
             .with_state(WledState {
                 on: true,
-                bri: 200,
+                brightness: 200,
                 ..Default::default()
             })
             .with_preset(
                 1,
                 PresetInfo {
-                    n: "Warm White".to_string(),
+                    name: "Warm White".to_string(),
                     ..Default::default()
                 },
             )
             .with_preset(
                 2,
                 PresetInfo {
-                    n: "Party Mode".to_string(),
+                    name: "Party Mode".to_string(),
                     ..Default::default()
                 },
             )
@@ -719,7 +719,7 @@ mod tests {
         let client = mock();
         let state = client.get_state().await.unwrap();
         assert!(state.on);
-        assert_eq!(state.bri, 200);
+        assert_eq!(state.brightness, 200);
     }
 
     #[tokio::test]
@@ -735,7 +735,7 @@ mod tests {
         let client = mock();
         client.set_brightness(100).await.unwrap();
         let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.bri, 100);
+        assert_eq!(state.brightness, 100);
     }
 
     #[tokio::test]
@@ -743,7 +743,7 @@ mod tests {
         let client = mock();
         client.set_color(255, 0, 0).await.unwrap();
         let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.seg[0].col[0], [255, 0, 0]);
+        assert_eq!(state.segments[0].colors[0], [255, 0, 0]);
     }
 
     #[tokio::test]
@@ -751,7 +751,7 @@ mod tests {
         let client = mock();
         client.activate_preset(1).await.unwrap();
         let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.ps, 1);
+        assert_eq!(state.preset_slot, 1);
     }
 
     #[tokio::test]
@@ -759,7 +759,7 @@ mod tests {
         let client = mock();
         client.activate_preset_by_name("Party Mode").await.unwrap();
         let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.ps, 2);
+        assert_eq!(state.preset_slot, 2);
     }
 
     #[tokio::test]
@@ -789,8 +789,8 @@ mod tests {
         let client = mock();
         let presets = client.list_presets().await.unwrap();
         assert_eq!(presets.len(), 2);
-        assert_eq!(presets[&1].n, "Warm White");
-        assert_eq!(presets[&2].n, "Party Mode");
+        assert_eq!(presets[&1].name, "Warm White");
+        assert_eq!(presets[&2].name, "Party Mode");
     }
 
     #[tokio::test]

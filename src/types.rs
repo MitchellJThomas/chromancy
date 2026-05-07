@@ -33,49 +33,50 @@ pub struct WledState {
     #[serde(default)]
     pub on: bool,
     /// Master brightness (0–255)
-    #[serde(default = "default_brightness")]
-    pub bri: u8,
+    #[serde(rename = "bri", default = "default_brightness")]
+    pub brightness: u8,
     /// Crossfade time in 100 ms units
     #[serde(default)]
     pub transition: u16,
     /// Active preset slot (−1 = none)
-    #[serde(default = "default_neg_one_i32")]
-    pub ps: i32,
+    #[serde(rename = "ps", default = "default_neg_one_i32")]
+    pub preset_slot: i32,
     /// Active playlist slot (−1 = none)
-    #[serde(default = "default_neg_one_i32")]
-    pub pl: i32,
+    #[serde(rename = "pl", default = "default_neg_one_i32")]
+    pub playlist_slot: i32,
     /// Nightlight state
-    #[serde(default)]
-    pub nl: NightlightState,
+    #[serde(rename = "nl", default)]
+    pub nightlight: NightlightState,
     /// UDP sync settings
-    #[serde(default)]
-    pub udpn: UdpSync,
+    #[serde(rename = "udpn", default)]
+    pub udp_sync: UdpSync,
     /// Live data override (0 = off, 1 = override, 2 = full)
-    #[serde(default)]
-    pub lor: u8,
+    #[serde(rename = "lor", default)]
+    pub live_override: u8,
     /// Main segment index
-    #[serde(default)]
-    pub mainseg: u8,
+    #[serde(rename = "mainseg", default)]
+    pub main_segment: u8,
     /// LED segments
-    #[serde(default)]
-    pub seg: Vec<Segment>,
+    #[serde(rename = "seg", default)]
+    pub segments: Vec<Segment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NightlightState {
     #[serde(default)]
     pub on: bool,
-    #[serde(default = "default_60_u8")]
-    pub dur: u8,
+    /// Duration in minutes
+    #[serde(rename = "dur", default = "default_60_u8")]
+    pub duration_minutes: u8,
     /// Mode: 0 = instant, 1 = fade, 2 = color fade, 3 = sunrise
     #[serde(default)]
     pub mode: u8,
     /// Target brightness
-    #[serde(default)]
-    pub tbri: u8,
+    #[serde(rename = "tbri", default)]
+    pub target_brightness: u8,
     /// Remaining time in seconds (−1 = inactive)
-    #[serde(default = "default_neg_one_i16")]
-    pub rem: i16,
+    #[serde(rename = "rem", default = "default_neg_one_i16")]
+    pub remaining_seconds: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -85,11 +86,11 @@ pub struct UdpSync {
     #[serde(default = "default_true")]
     pub recv: bool,
     /// Send group bitmask
-    #[serde(default = "default_1_u8")]
-    pub sgrp: u8,
+    #[serde(rename = "sgrp", default = "default_1_u8")]
+    pub send_group_mask: u8,
     /// Receive group bitmask
-    #[serde(default = "default_1_u8")]
-    pub rgrp: u8,
+    #[serde(rename = "rgrp", default = "default_1_u8")]
+    pub receive_group_mask: u8,
 }
 
 /// A single LED segment.
@@ -104,48 +105,55 @@ pub struct Segment {
     pub stop: u16,
     #[serde(default)]
     pub len: u16,
-    #[serde(default = "default_1_u8")]
-    pub grp: u8,
-    #[serde(default)]
-    pub spc: u8,
-    #[serde(default)]
-    pub of: u16,
+    /// Group size (how many LEDs are grouped together)
+    #[serde(rename = "grp", default = "default_1_u8")]
+    pub group_size: u8,
+    /// Spacing between grouped LEDs
+    #[serde(rename = "spc", default)]
+    pub spacing: u8,
+    /// Offset into the LED strip
+    #[serde(rename = "of", default)]
+    pub offset: u16,
     #[serde(default = "default_true")]
     pub on: bool,
-    #[serde(default)]
-    pub frz: bool,
-    #[serde(default = "default_brightness")]
-    pub bri: u8,
+    /// Freeze the segment (no animation updates)
+    #[serde(rename = "frz", default)]
+    pub frozen: bool,
+    #[serde(rename = "bri", default = "default_brightness")]
+    pub brightness: u8,
     /// Color temperature
-    #[serde(default)]
-    pub cct: u16,
+    #[serde(rename = "cct", default)]
+    pub color_temperature: u16,
     /// Colors: [[r,g,b], [r,g,b], [r,g,b]] (primary, secondary, tertiary)
-    #[serde(default)]
-    pub col: Vec<Color>,
+    #[serde(rename = "col", default)]
+    pub colors: Vec<Color>,
     /// Effect ID
-    #[serde(default)]
-    pub fx: u16,
+    #[serde(rename = "fx", default)]
+    pub effect_id: u16,
     /// Effect speed
-    #[serde(default = "default_128_u8")]
-    pub sx: u8,
+    #[serde(rename = "sx", default = "default_128_u8")]
+    pub effect_speed: u8,
     /// Effect intensity
-    #[serde(default = "default_128_u8")]
-    pub ix: u8,
+    #[serde(rename = "ix", default = "default_128_u8")]
+    pub effect_intensity: u8,
     /// Palette ID
-    #[serde(default)]
-    pub pal: u16,
-    #[serde(default = "default_128_u8")]
-    pub c1: u8,
-    #[serde(default = "default_128_u8")]
-    pub c2: u8,
-    #[serde(default)]
-    pub c3: u8,
-    #[serde(default = "default_true")]
-    pub sel: bool,
-    #[serde(default)]
-    pub rev: bool,
-    #[serde(default)]
-    pub mi: bool,
+    #[serde(rename = "pal", default)]
+    pub palette_id: u16,
+    #[serde(rename = "c1", default = "default_128_u8")]
+    pub custom1: u8,
+    #[serde(rename = "c2", default = "default_128_u8")]
+    pub custom2: u8,
+    #[serde(rename = "c3", default)]
+    pub custom3: u8,
+    /// Whether this segment is selected in the WLED UI
+    #[serde(rename = "sel", default = "default_true")]
+    pub selected: bool,
+    /// Reverse the segment direction
+    #[serde(rename = "rev", default)]
+    pub reversed: bool,
+    /// Mirror the segment
+    #[serde(rename = "mi", default)]
+    pub mirror: bool,
 }
 
 /// Partial state update sent to `/json/state`.
@@ -154,50 +162,50 @@ pub struct Segment {
 pub struct WledStateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bri: Option<u8>,
+    #[serde(rename = "bri", skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transition: Option<u16>,
     /// Activate preset by slot
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ps: Option<i32>,
+    #[serde(rename = "ps", skip_serializing_if = "Option::is_none")]
+    pub preset_slot: Option<i32>,
     /// Save current state to preset slot
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub psave: Option<i32>,
+    #[serde(rename = "psave", skip_serializing_if = "Option::is_none")]
+    pub preset_save_slot: Option<i32>,
     /// Delete preset slot
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pdel: Option<i32>,
-    /// Preset name (used with `psave`)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub n: Option<String>,
+    #[serde(rename = "pdel", skip_serializing_if = "Option::is_none")]
+    pub preset_delete_slot: Option<i32>,
+    /// Preset name (used with `preset_save_slot`)
+    #[serde(rename = "n", skip_serializing_if = "Option::is_none")]
+    pub preset_name: Option<String>,
     /// Activate playlist by slot
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pl: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nl: Option<NightlightRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub udpn: Option<UdpSyncRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lor: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mainseg: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seg: Option<Vec<SegmentRequest>>,
+    #[serde(rename = "pl", skip_serializing_if = "Option::is_none")]
+    pub playlist_slot: Option<i32>,
+    #[serde(rename = "nl", skip_serializing_if = "Option::is_none")]
+    pub nightlight: Option<NightlightRequest>,
+    #[serde(rename = "udpn", skip_serializing_if = "Option::is_none")]
+    pub udp_sync: Option<UdpSyncRequest>,
+    #[serde(rename = "lor", skip_serializing_if = "Option::is_none")]
+    pub live_override: Option<u8>,
+    #[serde(rename = "mainseg", skip_serializing_if = "Option::is_none")]
+    pub main_segment: Option<u8>,
+    #[serde(rename = "seg", skip_serializing_if = "Option::is_none")]
+    pub segments: Option<Vec<SegmentRequest>>,
     /// Return updated state in response
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub v: Option<bool>,
+    #[serde(rename = "v", skip_serializing_if = "Option::is_none")]
+    pub return_state: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NightlightRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dur: Option<u8>,
+    #[serde(rename = "dur", skip_serializing_if = "Option::is_none")]
+    pub duration_minutes: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tbri: Option<u8>,
+    #[serde(rename = "tbri", skip_serializing_if = "Option::is_none")]
+    pub target_brightness: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -219,51 +227,51 @@ pub struct SegmentRequest {
     pub stop: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bri: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub col: Option<Vec<Color>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fx: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sx: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ix: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pal: Option<u16>,
+    #[serde(rename = "bri", skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<u8>,
+    #[serde(rename = "col", skip_serializing_if = "Option::is_none")]
+    pub colors: Option<Vec<Color>>,
+    #[serde(rename = "fx", skip_serializing_if = "Option::is_none")]
+    pub effect_id: Option<u16>,
+    #[serde(rename = "sx", skip_serializing_if = "Option::is_none")]
+    pub effect_speed: Option<u8>,
+    #[serde(rename = "ix", skip_serializing_if = "Option::is_none")]
+    pub effect_intensity: Option<u8>,
+    #[serde(rename = "pal", skip_serializing_if = "Option::is_none")]
+    pub palette_id: Option<u16>,
 }
 
 /// Device information from `/json/info`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WledInfo {
     /// Firmware version string
-    #[serde(default)]
-    pub ver: String,
+    #[serde(rename = "ver", default)]
+    pub firmware_version: String,
     /// Build ID
-    #[serde(default)]
-    pub vid: u32,
-    #[serde(default)]
-    pub leds: LedInfo,
+    #[serde(rename = "vid", default)]
+    pub build_id: u32,
+    #[serde(rename = "leds", default)]
+    pub led_info: LedInfo,
     /// Device name (AP/mDNS name)
     #[serde(default)]
     pub name: String,
-    #[serde(default)]
-    pub udpport: u16,
+    #[serde(rename = "udpport", default)]
+    pub udp_port: u16,
     #[serde(default)]
     pub live: bool,
     /// Number of effects
-    #[serde(default)]
-    pub fxcount: u16,
+    #[serde(rename = "fxcount", default)]
+    pub effect_count: u16,
     /// Number of palettes
-    #[serde(default)]
-    pub palcount: u16,
+    #[serde(rename = "palcount", default)]
+    pub palette_count: u16,
     /// Platform (e.g. "esp32")
-    #[serde(default)]
-    pub arch: String,
+    #[serde(rename = "arch", default)]
+    pub platform: String,
     #[serde(default)]
     pub core: String,
-    #[serde(default)]
-    pub freeheap: u32,
+    #[serde(rename = "freeheap", default)]
+    pub free_heap: u32,
     /// Uptime in seconds
     #[serde(default)]
     pub uptime: u64,
@@ -283,19 +291,20 @@ pub struct LedInfo {
     #[serde(default)]
     pub count: u32,
     /// Current power draw in mA
-    #[serde(default)]
-    pub pwr: u32,
+    #[serde(rename = "pwr", default)]
+    pub power_draw_ma: u32,
     /// Current FPS
     #[serde(default)]
     pub fps: u32,
     /// Max power budget in mA
-    #[serde(default)]
-    pub maxpwr: u32,
+    #[serde(rename = "maxpwr", default)]
+    pub max_power_ma: u32,
     /// Max segments
-    #[serde(default)]
-    pub maxseg: u8,
-    #[serde(default)]
-    pub rgbw: bool,
+    #[serde(rename = "maxseg", default)]
+    pub max_segments: u8,
+    /// Whether the device has a dedicated white channel (RGBW)
+    #[serde(rename = "rgbw", default)]
+    pub has_white_channel: bool,
 }
 
 /// Full state response from `/json`.
@@ -313,11 +322,11 @@ pub struct WledFullState {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PresetInfo {
     /// Preset name
-    #[serde(default)]
-    pub n: String,
+    #[serde(rename = "n", default)]
+    pub name: String,
     /// Quick label (shown in WLED UI)
-    #[serde(default)]
-    pub ql: String,
+    #[serde(rename = "ql", default)]
+    pub quick_label: String,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
