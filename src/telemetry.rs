@@ -104,6 +104,18 @@ pub struct TelemetryGuards {
     logger_provider: LoggerProvider,
 }
 
+impl TelemetryGuards {
+    /// Create a no-op guard for when telemetry is disabled.
+    /// Shutdown is a no-op on these empty providers.
+    pub fn noop() -> Self {
+        Self {
+            tracer_provider: TracerProvider::builder().build(),
+            meter_provider: SdkMeterProvider::builder().build(),
+            logger_provider: LoggerProvider::builder().build(),
+        }
+    }
+}
+
 impl Drop for TelemetryGuards {
     fn drop(&mut self) {
         if let Err(e) = self.tracer_provider.shutdown() {

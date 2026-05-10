@@ -8,6 +8,7 @@ use crate::types::*;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+const RETRY_JITTER_MAX_MS: u64 = 200;
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 
 // ── HTTP backend ──────────────────────────────────────────────────────────────
@@ -108,8 +109,8 @@ impl HttpInner {
         path: &str,
     ) -> Result<T, WledError> {
         match self.get(path).await {
-            Err(WledError::Network { .. }) | Err(WledError::Timeout) => {
-                tokio::time::sleep(RETRY_DELAY).await;
+            Err(e) if Self::is_retriable(&e) => {
+                self.delay_with_jitter().await;
                 self.get(path).await
             }
             result => result,
@@ -122,12 +123,30 @@ impl HttpInner {
         body: &serde_json::Value,
     ) -> Result<(), WledError> {
         match self.post_void(path, body).await {
-            Err(WledError::Network { .. }) | Err(WledError::Timeout) => {
-                tokio::time::sleep(RETRY_DELAY).await;
+            Err(e) if Self::is_retriable(&e) => {
+                self.delay_with_jitter().await;
                 self.post_void(path, body).await
             }
             result => result,
         }
+    }
+
+    /// Returns true if the error is transient and worth retrying.
+    fn is_retriable(err: &WledError) -> bool {
+        matches!(
+            err,
+            WledError::Network { .. } | WledError::Timeout
+        ) || matches!(
+            err,
+            WledError::Api { status, .. } if (500..600).contains(status)
+        )
+    }
+
+    /// Small random delay to avoid thundering herd on retries.
+    async fn delay_with_jitter(&self) {
+        let jitter_ms = rand::random::<u64>() % RETRY_JITTER_MAX_MS;
+        let jitter = std::time::Duration::from_millis(jitter_ms);
+        tokio::time::sleep(RETRY_DELAY + jitter).await;
     }
 
     fn map_err(&self, e: reqwest::Error) -> WledError {
@@ -158,6 +177,213 @@ pub struct MockInner {
 enum ClientKind {
     Http(Arc<HttpInner>),
     Mock(Arc<MockInner>),
+}
+
+impl ClientKind {
+    fn device_name(&self) -> &str {
+        match self {
+            ClientKind::Http(i) => &i.device_name,
+            ClientKind::Mock(i) => &i.device_name,
+        }
+    }
+
+    async fn get_state(&self) -> Result<WledState, WledError> {
+        match self {
+            ClientKind::Http(i) => i.get_with_retry("/json/state").await,
+            ClientKind::Mock(i) => {
+                // Simulate HTTP JSON round-trip to catch serialization issues.
+                let state = i.state.read().await.clone();
+                let json = serde_json::to_value(&state)?;
+                serde_json::from_value(json).map_err(WledError::from)
+            }
+        }
+    }
+
+    async fn get_info(&self) -> Result<WledInfo, WledError> {
+        match self {
+            ClientKind::Http(i) => i.get_with_retry("/json/info").await,
+            ClientKind::Mock(i) => {
+                let info = i.info.clone();
+                let json = serde_json::to_value(&info)?;
+                serde_json::from_value(json).map_err(WledError::from)
+            }
+        }
+    }
+
+    async fn get_full_state(&self) -> Result<WledFullState, WledError> {
+        match self {
+            ClientKind::Http(i) => i.get_with_retry("/json").await,
+            ClientKind::Mock(i) => Ok(WledFullState {
+                state: i.state.read().await.clone(),
+                info: i.info.clone(),
+                effects: i.effects.clone(),
+                palettes: i.palettes.clone(),
+            }),
+        }
+    }
+
+    async fn list_effects(&self) -> Result<Vec<String>, WledError> {
+        match self {
+            ClientKind::Http(i) => {
+                {
+                    let cache = i.effects_cache.read().await;
+                    if let Some(c) = cache.as_ref() {
+                        if c.is_valid() {
+                            return Ok(c.data.clone());
+                        }
+                    }
+                }
+                let data: Vec<String> = i.get_with_retry("/json/effects").await?;
+                *i.effects_cache.write().await = Some(CachedList::new(data.clone()));
+                Ok(data)
+            }
+            ClientKind::Mock(i) => Ok(i.effects.clone()),
+        }
+    }
+
+    async fn list_palettes(&self) -> Result<Vec<String>, WledError> {
+        match self {
+            ClientKind::Http(i) => {
+                {
+                    let cache = i.palettes_cache.read().await;
+                    if let Some(c) = cache.as_ref() {
+                        if c.is_valid() {
+                            return Ok(c.data.clone());
+                        }
+                    }
+                }
+                let data: Vec<String> = i.get_with_retry("/json/palettes").await?;
+                *i.palettes_cache.write().await = Some(CachedList::new(data.clone()));
+                Ok(data)
+            }
+            ClientKind::Mock(i) => Ok(i.palettes.clone()),
+        }
+    }
+
+    async fn get_palette_colors(&self, palette_id: u16) -> Result<serde_json::Value, WledError> {
+        match self {
+            ClientKind::Http(i) => {
+                let path = format!("/json/palettes?v=1&cb={}", palette_id);
+                i.get_with_retry(&path).await
+            }
+            ClientKind::Mock(_) => Ok(serde_json::json!([])),
+        }
+    }
+
+    async fn post_state(&self, request: &WledStateRequest) -> Result<(), WledError> {
+        match self {
+            ClientKind::Http(i) => {
+                let body = serde_json::to_value(request)?;
+                i.post_void_with_retry("/json/state", &body).await
+            }
+            ClientKind::Mock(i) => {
+                // Simulate the HTTP round-trip: serialize request to JSON, then
+                // deserialize back and apply. This ensures the mock tests the
+                // same serialization path as the real HTTP backend.
+                let body = serde_json::to_value(request)?;
+                let applied: WledStateRequest = serde_json::from_value(body)?;
+                let mut state = i.state.write().await;
+                if let Some(on) = applied.on {
+                    state.on = on;
+                }
+                if let Some(bri) = applied.brightness {
+                    state.brightness = bri;
+                }
+                if let Some(transition) = applied.transition {
+                    state.transition = transition;
+                }
+                if let Some(ps) = applied.preset_slot {
+                    state.preset_slot = ps;
+                }
+                if let Some(lor) = applied.live_override {
+                    state.live_override = lor;
+                }
+                if let Some(mainseg) = applied.main_segment {
+                    state.main_segment = mainseg;
+                }
+                if let Some(segs) = applied.segments {
+                    for seg_req in segs {
+                        let id = seg_req.id.unwrap_or(0) as usize;
+                        while state.segments.len() <= id {
+                            state.segments.push(Segment::default());
+                        }
+                        let seg = &mut state.segments[id];
+                        if let Some(on) = seg_req.on {
+                            seg.on = on;
+                        }
+                        if let Some(bri) = seg_req.brightness {
+                            seg.brightness = bri;
+                        }
+                        if let Some(col) = seg_req.colors {
+                            seg.colors = col;
+                        }
+                        if let Some(fx) = seg_req.effect_id {
+                            seg.effect_id = fx;
+                        }
+                        if let Some(sx) = seg_req.effect_speed {
+                            seg.effect_speed = sx;
+                        }
+                        if let Some(ix) = seg_req.effect_intensity {
+                            seg.effect_intensity = ix;
+                        }
+                        if let Some(pal) = seg_req.palette_id {
+                            seg.palette_id = pal;
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    async fn list_presets(&self) -> Result<HashMap<i32, PresetInfo>, WledError> {
+        match self {
+            ClientKind::Http(i) => i.get_with_retry("/json/presets").await,
+            ClientKind::Mock(i) => Ok(i.presets.read().await.clone()),
+        }
+    }
+
+    async fn configure_ntp(&self, body: &serde_json::Value) -> Result<(), WledError> {
+        match self {
+            ClientKind::Http(i) => i.post_void_with_retry("/json/cfg", body).await,
+            ClientKind::Mock(_) => Ok(()),
+        }
+    }
+
+    async fn configure_dusk_schedule(&self, body: &serde_json::Value) -> Result<(), WledError> {
+        match self {
+            ClientKind::Http(i) => i.post_void_with_retry("/json/cfg", body).await,
+            ClientKind::Mock(_) => Ok(()),
+        }
+    }
+
+    async fn raw_request<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<T, WledError> {
+        match self {
+            ClientKind::Http(i) => match method.to_uppercase().as_str() {
+                "GET" => i.get_with_retry(path).await,
+                "POST" => {
+                    let b = body.unwrap_or(serde_json::Value::Null);
+                    i.post(path, &b).await
+                }
+                m => Err(WledError::ConfigError(format!("Unsupported method: {}", m))),
+            },
+            ClientKind::Mock(_) => Err(WledError::ConfigError(
+                "raw_request not supported on mock client".to_string(),
+            )),
+        }
+    }
+
+    async fn mock_get_state(&self) -> Option<WledState> {
+        match self {
+            ClientKind::Mock(i) => Some(i.state.read().await.clone()),
+            _ => None,
+        }
+    }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -194,80 +420,33 @@ impl WledClient {
 
     /// The human-readable device name used in error messages.
     pub fn device_name(&self) -> &str {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => &i.device_name,
-            ClientKind::Mock(i) => &i.device_name,
-        }
+        self.inner.device_name()
     }
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn get_state(&self) -> Result<WledState, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => i.get_with_retry("/json/state").await,
-            ClientKind::Mock(i) => Ok(i.state.read().await.clone()),
-        }
+        self.inner.get_state().await
     }
 
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn get_info(&self) -> Result<WledInfo, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => i.get_with_retry("/json/info").await,
-            ClientKind::Mock(i) => Ok(i.info.clone()),
-        }
+        self.inner.get_info().await
     }
 
     pub async fn get_full_state(&self) -> Result<WledFullState, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => i.get_with_retry("/json").await,
-            ClientKind::Mock(i) => Ok(WledFullState {
-                state: i.state.read().await.clone(),
-                info: i.info.clone(),
-                effects: i.effects.clone(),
-                palettes: i.palettes.clone(),
-            }),
-        }
+        self.inner.get_full_state().await
     }
 
     /// Returns effect names. Cached for 1 hour.
     pub async fn list_effects(&self) -> Result<Vec<String>, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => {
-                {
-                    let cache = i.effects_cache.read().await;
-                    if let Some(c) = cache.as_ref() {
-                        if c.is_valid() {
-                            return Ok(c.data.clone());
-                        }
-                    }
-                }
-                let data: Vec<String> = i.get_with_retry("/json/effects").await?;
-                *i.effects_cache.write().await = Some(CachedList::new(data.clone()));
-                Ok(data)
-            }
-            ClientKind::Mock(i) => Ok(i.effects.clone()),
-        }
+        self.inner.list_effects().await
     }
 
     /// Returns palette names. Cached for 1 hour.
     pub async fn list_palettes(&self) -> Result<Vec<String>, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => {
-                {
-                    let cache = i.palettes_cache.read().await;
-                    if let Some(c) = cache.as_ref() {
-                        if c.is_valid() {
-                            return Ok(c.data.clone());
-                        }
-                    }
-                }
-                let data: Vec<String> = i.get_with_retry("/json/palettes").await?;
-                *i.palettes_cache.write().await = Some(CachedList::new(data.clone()));
-                Ok(data)
-            }
-            ClientKind::Mock(i) => Ok(i.palettes.clone()),
-        }
+        self.inner.list_palettes().await
     }
 
     /// Returns raw palette color data for the given palette index.
@@ -275,13 +454,7 @@ impl WledClient {
         &self,
         palette_id: u16,
     ) -> Result<serde_json::Value, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => {
-                let path = format!("/json/palettes?v=1&cb={}", palette_id);
-                i.get_with_retry(&path).await
-            }
-            ClientKind::Mock(_) => Ok(serde_json::json!([])),
-        }
+        self.inner.get_palette_colors(palette_id).await
     }
 
     /// Returns `true` if the device responds to a state request.
@@ -362,64 +535,7 @@ impl WledClient {
     /// Sends an arbitrary state update. Only `Some` fields are applied.
     #[tracing::instrument(skip(self, request), fields(device = %self.device_name()))]
     pub async fn set_state(&self, request: WledStateRequest) -> Result<(), WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => {
-                let body = serde_json::to_value(&request)?;
-                i.post_void_with_retry("/json/state", &body).await
-            }
-            ClientKind::Mock(i) => {
-                let mut state = i.state.write().await;
-                if let Some(on) = request.on {
-                    state.on = on;
-                }
-                if let Some(bri) = request.brightness {
-                    state.brightness = bri;
-                }
-                if let Some(transition) = request.transition {
-                    state.transition = transition;
-                }
-                if let Some(ps) = request.preset_slot {
-                    state.preset_slot = ps;
-                }
-                if let Some(lor) = request.live_override {
-                    state.live_override = lor;
-                }
-                if let Some(mainseg) = request.main_segment {
-                    state.main_segment = mainseg;
-                }
-                if let Some(segs) = request.segments {
-                    for seg_req in segs {
-                        let id = seg_req.id.unwrap_or(0) as usize;
-                        while state.segments.len() <= id {
-                            state.segments.push(Segment::default());
-                        }
-                        let seg = &mut state.segments[id];
-                        if let Some(on) = seg_req.on {
-                            seg.on = on;
-                        }
-                        if let Some(bri) = seg_req.brightness {
-                            seg.brightness = bri;
-                        }
-                        if let Some(col) = seg_req.colors {
-                            seg.colors = col;
-                        }
-                        if let Some(fx) = seg_req.effect_id {
-                            seg.effect_id = fx;
-                        }
-                        if let Some(sx) = seg_req.effect_speed {
-                            seg.effect_speed = sx;
-                        }
-                        if let Some(ix) = seg_req.effect_intensity {
-                            seg.effect_intensity = ix;
-                        }
-                        if let Some(pal) = seg_req.palette_id {
-                            seg.palette_id = pal;
-                        }
-                    }
-                }
-                Ok(())
-            }
-        }
+        self.inner.post_state(&request).await
     }
 
     // ── Presets ───────────────────────────────────────────────────────────────
@@ -427,10 +543,7 @@ impl WledClient {
     /// Returns all presets keyed by their integer slot ID.
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn list_presets(&self) -> Result<HashMap<i32, PresetInfo>, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => i.get_with_retry("/json/presets").await,
-            ClientKind::Mock(i) => Ok(i.presets.read().await.clone()),
-        }
+        self.inner.list_presets().await
     }
 
     /// Activates a preset by slot ID.
@@ -481,10 +594,7 @@ impl WledClient {
                 "ins": [{ "ntp": config.server.as_str() }]
             }
         });
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => i.post_void_with_retry("/json/cfg", &body).await,
-            ClientKind::Mock(_) => Ok(()),
-        }
+        self.inner.configure_ntp(&body).await
     }
 
     /// Configures a dusk-based schedule timer via `/json/cfg`.
@@ -509,10 +619,7 @@ impl WledClient {
                 }]
             }
         });
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => i.post_void_with_retry("/json/cfg", &body).await,
-            ClientKind::Mock(_) => Ok(()),
-        }
+        self.inner.configure_dusk_schedule(&body).await
     }
 
     // ── Escape hatch ──────────────────────────────────────────────────────────
@@ -524,19 +631,7 @@ impl WledClient {
         path: &str,
         body: Option<serde_json::Value>,
     ) -> Result<T, WledError> {
-        match self.inner.as_ref() {
-            ClientKind::Http(i) => match method.to_uppercase().as_str() {
-                "GET" => i.get_with_retry(path).await,
-                "POST" => {
-                    let b = body.unwrap_or(serde_json::Value::Null);
-                    i.post(path, &b).await
-                }
-                m => Err(WledError::ConfigError(format!("Unsupported method: {}", m))),
-            },
-            ClientKind::Mock(_) => Err(WledError::ConfigError(
-                "raw_request not supported on mock client".to_string(),
-            )),
-        }
+        self.inner.raw_request(method, path, body).await
     }
 
     // ── Test helpers ──────────────────────────────────────────────────────────
@@ -544,10 +639,7 @@ impl WledClient {
     /// Returns the mock inner state for assertions in tests.
     /// Returns `None` on a real HTTP client.
     pub async fn mock_get_state(&self) -> Option<WledState> {
-        match self.inner.as_ref() {
-            ClientKind::Mock(i) => Some(i.state.read().await.clone()),
-            _ => None,
-        }
+        self.inner.mock_get_state().await
     }
 
 }
@@ -793,8 +885,8 @@ mod tests {
         assert!(client.ping().await.unwrap());
     }
 
-    #[tokio::test]
-    async fn test_builder_rejects_bad_timeout() {
+    #[test]
+    fn test_builder_rejects_bad_timeout() {
         // Duration::ZERO is valid for reqwest, so just verify the builder pattern
         let result = WledClient::builder("192.168.1.1")
             .device_name("living-room")
