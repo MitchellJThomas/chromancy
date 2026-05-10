@@ -1,4 +1,4 @@
-use rmcp::{ServerHandler, model::{ServerCapabilities, ServerInfo}, schemars, tool};
+use rmcp::{ServerHandler, handler::server::wrapper::Parameters, schemars, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -100,7 +100,7 @@ pub struct ChromancyServer {
     pub fleet: WledFleet,
 }
 
-#[tool(tool_box)]
+#[tool_router]
 impl ChromancyServer {
     // ── Group Management ───────────────────────────────────────────────────────
 
@@ -111,7 +111,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "List devices in a group, or all devices if no group specified")]
-    fn list_devices(&self, #[tool(aggr)] p: OptionalGroupNameParam) -> String {
+    fn list_devices(&self, params: Parameters<OptionalGroupNameParam>) -> String {
+        let p = params.0;
         match p.group_name.as_deref() {
             Some(gname) => match self.fleet.get_group(gname) {
                 None => json!({"error": format!("Group '{}' not found", gname)}).to_string(),
@@ -139,7 +140,8 @@ impl ChromancyServer {
     // ── Device Queries ─────────────────────────────────────────────────────────
 
     #[tool(description = "Get device capabilities (LED count, firmware version, uptime)")]
-    async fn get_device_info(&self, #[tool(aggr)] p: DeviceNameParam) -> String {
+    async fn get_device_info(&self, params: Parameters<DeviceNameParam>) -> String {
+        let p = params.0;
         match self.fleet.get_device(&p.device_name).cloned() {
             None => json!({"error": format!("Device '{}' not found", p.device_name)}).to_string(),
             Some(client) => match client.get_info().await {
@@ -150,7 +152,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Get current state of a device (power, brightness, effect, palette)")]
-    async fn get_device_state(&self, #[tool(aggr)] p: DeviceNameParam) -> String {
+    async fn get_device_state(&self, params: Parameters<DeviceNameParam>) -> String {
+        let p = params.0;
         match self.fleet.get_device(&p.device_name).cloned() {
             None => json!({"error": format!("Device '{}' not found", p.device_name)}).to_string(),
             Some(client) => match client.get_state().await {
@@ -161,7 +164,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Get status of a specific sync group")]
-    async fn get_group_status(&self, #[tool(aggr)] p: GroupNameParam) -> String {
+    async fn get_group_status(&self, params: Parameters<GroupNameParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -188,7 +192,8 @@ impl ChromancyServer {
     // ── Group Control ──────────────────────────────────────────────────────────
 
     #[tool(description = "Activate a preset by name on a sync group (leader syncs to followers)")]
-    async fn activate_preset(&self, #[tool(aggr)] p: ActivatePresetParam) -> String {
+    async fn activate_preset(&self, params: Parameters<ActivatePresetParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -201,7 +206,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Activate the same preset across multiple sync groups concurrently")]
-    async fn activate_preset_broadcast(&self, #[tool(aggr)] p: BroadcastPresetParam) -> String {
+    async fn activate_preset_broadcast(&self, params: Parameters<BroadcastPresetParam>) -> String {
+        let p = params.0;
         let group_refs: Vec<&str> = p.group_names.iter().map(String::as_str).collect();
         match self
             .fleet
@@ -214,7 +220,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "List available presets on a group's leader device")]
-    async fn list_presets(&self, #[tool(aggr)] p: GroupNameParam) -> String {
+    async fn list_presets(&self, params: Parameters<GroupNameParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -233,7 +240,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Turn a sync group on or off")]
-    async fn set_power(&self, #[tool(aggr)] p: SetPowerParam) -> String {
+    async fn set_power(&self, params: Parameters<SetPowerParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -246,7 +254,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Set master brightness (0-255) on a sync group")]
-    async fn set_brightness(&self, #[tool(aggr)] p: SetBrightnessParam) -> String {
+    async fn set_brightness(&self, params: Parameters<SetBrightnessParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -259,7 +268,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Set primary RGB color on a sync group's leader (segment 0)")]
-    async fn set_color(&self, #[tool(aggr)] p: SetColorParam) -> String {
+    async fn set_color(&self, params: Parameters<SetColorParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -272,7 +282,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Set active effect by name on a sync group")]
-    async fn set_effect(&self, #[tool(aggr)] p: SetEffectParam) -> String {
+    async fn set_effect(&self, params: Parameters<SetEffectParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -285,7 +296,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Set active palette by name on a sync group")]
-    async fn set_palette(&self, #[tool(aggr)] p: SetPaletteParam) -> String {
+    async fn set_palette(&self, params: Parameters<SetPaletteParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -300,7 +312,8 @@ impl ChromancyServer {
     // ── Sync Health & Troubleshooting ──────────────────────────────────────────
 
     #[tool(description = "Check sync health — specific group or all groups if omitted")]
-    async fn check_sync_health(&self, #[tool(aggr)] p: OptionalGroupNameParam) -> String {
+    async fn check_sync_health(&self, params: Parameters<OptionalGroupNameParam>) -> String {
+        let p = params.0;
         match p.group_name.as_deref() {
             Some(gname) => match self.fleet.get_group(gname).cloned() {
                 None => json!({"error": format!("Group '{}' not found", gname)}).to_string(),
@@ -319,7 +332,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Force all followers in a group to re-sync with the leader")]
-    async fn force_resync(&self, #[tool(aggr)] p: GroupNameParam) -> String {
+    async fn force_resync(&self, params: Parameters<GroupNameParam>) -> String {
+        let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
             None => {
                 json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
@@ -332,7 +346,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Get state of a single device independently (for troubleshooting)")]
-    async fn get_individual_state(&self, #[tool(aggr)] p: DeviceNameParam) -> String {
+    async fn get_individual_state(&self, params: Parameters<DeviceNameParam>) -> String {
+        let p = params.0;
         match self.fleet.get_device(&p.device_name).cloned() {
             None => json!({"error": format!("Device '{}' not found", p.device_name)}).to_string(),
             Some(client) => match client.get_state().await {
@@ -343,7 +358,8 @@ impl ChromancyServer {
     }
 
     #[tool(description = "Control a single device's power independently (bypasses group sync)")]
-    async fn set_individual_power(&self, #[tool(aggr)] p: IndividualPowerParam) -> String {
+    async fn set_individual_power(&self, params: Parameters<IndividualPowerParam>) -> String {
+        let p = params.0;
         match self.fleet.get_device(&p.device_name).cloned() {
             None => json!({"error": format!("Device '{}' not found", p.device_name)}).to_string(),
             Some(client) => match client.set_power(p.on).await {
@@ -354,16 +370,5 @@ impl ChromancyServer {
     }
 }
 
-#[tool(tool_box)]
-impl ServerHandler for ChromancyServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Chromancy MCP server — controls WLED LED sync groups for lighting art"
-                    .into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
-    }
-}
+#[tool_handler]
+impl ServerHandler for ChromancyServer {}
