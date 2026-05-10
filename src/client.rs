@@ -59,12 +59,10 @@ impl HttpInner {
             });
         }
 
-        resp.json()
-            .await
-            .map_err(|e| WledError::Network {
-                device: self.device_name.clone(),
-                source: e,
-            })
+        resp.json().await.map_err(|e| WledError::Network {
+            device: self.device_name.clone(),
+            source: e,
+        })
     }
 
     async fn post<T: serde::de::DeserializeOwned>(
@@ -91,12 +89,10 @@ impl HttpInner {
             });
         }
 
-        resp.json()
-            .await
-            .map_err(|e| WledError::Network {
-                device: self.device_name.clone(),
-                source: e,
-            })
+        resp.json().await.map_err(|e| WledError::Network {
+            device: self.device_name.clone(),
+            source: e,
+        })
     }
 
     async fn post_void(&self, path: &str, body: &serde_json::Value) -> Result<(), WledError> {
@@ -133,13 +129,11 @@ impl HttpInner {
 
     /// Returns true if the error is transient and worth retrying.
     fn is_retriable(err: &WledError) -> bool {
-        matches!(
-            err,
-            WledError::Network { .. } | WledError::Timeout
-        ) || matches!(
-            err,
-            WledError::Api { status, .. } if (500..600).contains(status)
-        )
+        matches!(err, WledError::Network { .. } | WledError::Timeout)
+            || matches!(
+                err,
+                WledError::Api { status, .. } if (500..600).contains(status)
+            )
     }
 
     /// Small random delay to avoid thundering herd on retries.
@@ -641,7 +635,6 @@ impl WledClient {
     pub async fn mock_get_state(&self) -> Option<WledState> {
         self.inner.mock_get_state().await
     }
-
 }
 
 // ── Builder types ─────────────────────────────────────────────────────────────
@@ -669,17 +662,14 @@ impl WledClientBuilder {
             .build()
             .map_err(|e| WledError::ConfigError(e.to_string()))?;
 
-        let device_name = self
-            .device_name
-            .unwrap_or_else(|| self.address.clone());
+        let device_name = self.device_name.unwrap_or_else(|| self.address.clone());
 
-        let base_url = if self.address.starts_with("http://")
-            || self.address.starts_with("https://")
-        {
-            self.address
-        } else {
-            format!("http://{}", self.address)
-        };
+        let base_url =
+            if self.address.starts_with("http://") || self.address.starts_with("https://") {
+                self.address
+            } else {
+                format!("http://{}", self.address)
+            };
 
         Ok(WledClient {
             inner: Arc::new(ClientKind::Http(Arc::new(HttpInner {
@@ -961,8 +951,7 @@ mod http_tests {
         Mock::given(method("GET"))
             .and(path("/json/state"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_delay(std::time::Duration::from_millis(300)),
+                ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(300)),
             )
             .mount(&server)
             .await;

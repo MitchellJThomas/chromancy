@@ -383,19 +383,29 @@ mod tests {
                 }],
                 ..Default::default()
             })
-            .with_preset(3, PresetInfo { name: "Red Party".to_string(), ..Default::default() })
+            .with_preset(
+                3,
+                PresetInfo {
+                    name: "Red Party".to_string(),
+                    ..Default::default()
+                },
+            )
             .build()
     }
 
     fn make_follower(name: &str, preset: i32) -> WledClient {
         WledClient::mock()
             .with_device_name(name)
-            .with_state(WledState { preset_slot: preset, ..Default::default() })
+            .with_state(WledState {
+                preset_slot: preset,
+                ..Default::default()
+            })
             .build()
     }
 
     fn make_group() -> WledSyncGroup {
-        let mut g = WledSyncGroup::new("test-group", "leader-1", make_leader("leader-1"), "DigQuad");
+        let mut g =
+            WledSyncGroup::new("test-group", "leader-1", make_leader("leader-1"), "DigQuad");
         g.add_follower("follower-1", make_follower("follower-1", 3), "DigUno");
         g.add_follower("follower-2", make_follower("follower-2", 99), "Dig2Go");
         g
@@ -475,8 +485,16 @@ mod tests {
         let report = g.check_sync_health().await.unwrap();
         // follower-1 is in sync (ps=3), follower-2 is drifted (ps=99)
         assert!(!report.healthy);
-        let f1 = report.devices.iter().find(|d| d.device_name == "follower-1").unwrap();
-        let f2 = report.devices.iter().find(|d| d.device_name == "follower-2").unwrap();
+        let f1 = report
+            .devices
+            .iter()
+            .find(|d| d.device_name == "follower-1")
+            .unwrap();
+        let f2 = report
+            .devices
+            .iter()
+            .find(|d| d.device_name == "follower-2")
+            .unwrap();
         assert!(f1.is_healthy);
         assert!(!f2.is_healthy);
         assert_eq!(f2.device_preset, 99);
@@ -495,8 +513,12 @@ mod tests {
         let g = make_group();
         g.force_resync().await.unwrap();
         // After resync, follower-2 (preset_slot=99) should now have preset_slot=3
-        let f2_state = g.get_follower("follower-2").unwrap()
-            .get_state().await.unwrap();
+        let f2_state = g
+            .get_follower("follower-2")
+            .unwrap()
+            .get_state()
+            .await
+            .unwrap();
         assert_eq!(f2_state.preset_slot, 3);
     }
 

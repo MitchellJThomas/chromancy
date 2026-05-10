@@ -134,9 +134,7 @@ impl WledFleet {
                     let group = group.clone();
                     let preset = preset_name.to_string();
                     let gname = name.to_string();
-                    handles.spawn(async move {
-                        (gname, group.activate_preset(&preset).await)
-                    });
+                    handles.spawn(async move { (gname, group.activate_preset(&preset).await) });
                 }
             }
         }
@@ -181,8 +179,7 @@ impl WledFleet {
 
         let mut statuses: Vec<GroupStatus> = Vec::new();
         while let Some(res) = handles.join_next().await {
-            let (group_name, leader_name, device_count, state_result) =
-                res.expect("task panicked");
+            let (group_name, leader_name, device_count, state_result) = res.expect("task panicked");
             let (on, brightness, active_preset) = match state_result {
                 Ok(s) => (s.on, s.brightness, s.preset_slot),
                 Err(e) => {
@@ -207,7 +204,12 @@ impl WledFleet {
             .enumerate()
             .map(|(i, k)| (k.as_str(), i))
             .collect();
-        statuses.sort_by_key(|s| order.get(s.group_name.as_str()).copied().unwrap_or(usize::MAX));
+        statuses.sort_by_key(|s| {
+            order
+                .get(s.group_name.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
 
         let total_devices = statuses.iter().map(|s| s.device_count).sum();
         let total_groups = statuses.len();

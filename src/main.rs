@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use chromancy::{WledFleet, telemetry};
 use chromancy::tools::ChromancyServer;
+use chromancy::{telemetry, WledFleet};
 use rmcp::ServiceExt;
 
 #[tokio::main]

@@ -1,4 +1,6 @@
-use rmcp::{ServerHandler, handler::server::wrapper::Parameters, schemars, tool, tool_handler, tool_router};
+use rmcp::{
+    handler::server::wrapper::Parameters, schemars, tool, tool_handler, tool_router, ServerHandler,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -167,9 +169,7 @@ impl ChromancyServer {
     async fn get_group_status(&self, params: Parameters<GroupNameParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.get_state().await {
                 Ok(state) => json!({
                     "group": p.group_name,
@@ -195,9 +195,7 @@ impl ChromancyServer {
     async fn activate_preset(&self, params: Parameters<ActivatePresetParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.activate_preset(&p.preset_name).await {
                 Ok(()) => json!({"success": true}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -223,9 +221,7 @@ impl ChromancyServer {
     async fn list_presets(&self, params: Parameters<GroupNameParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.list_presets().await {
                 Ok(presets) => {
                     let list: Vec<serde_json::Value> = presets
@@ -243,9 +239,7 @@ impl ChromancyServer {
     async fn set_power(&self, params: Parameters<SetPowerParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.set_power(p.on).await {
                 Ok(()) => json!({"success": true, "power": p.on}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -257,9 +251,7 @@ impl ChromancyServer {
     async fn set_brightness(&self, params: Parameters<SetBrightnessParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.set_brightness(p.brightness).await {
                 Ok(()) => json!({"success": true, "brightness": p.brightness}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -271,9 +263,7 @@ impl ChromancyServer {
     async fn set_color(&self, params: Parameters<SetColorParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.set_color(p.r, p.g, p.b).await {
                 Ok(()) => json!({"success": true}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -285,9 +275,7 @@ impl ChromancyServer {
     async fn set_effect(&self, params: Parameters<SetEffectParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.set_effect(&p.effect_name).await {
                 Ok(()) => json!({"success": true}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -299,9 +287,7 @@ impl ChromancyServer {
     async fn set_palette(&self, params: Parameters<SetPaletteParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.set_palette(&p.palette_name).await {
                 Ok(()) => json!({"success": true}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
@@ -335,9 +321,7 @@ impl ChromancyServer {
     async fn force_resync(&self, params: Parameters<GroupNameParam>) -> String {
         let p = params.0;
         match self.fleet.get_group(&p.group_name).cloned() {
-            None => {
-                json!({"error": format!("Group '{}' not found", p.group_name)}).to_string()
-            }
+            None => json!({"error": format!("Group '{}' not found", p.group_name)}).to_string(),
             Some(group) => match group.force_resync().await {
                 Ok(()) => json!({"success": true}).to_string(),
                 Err(e) => json!({"error": e.to_string()}).to_string(),
