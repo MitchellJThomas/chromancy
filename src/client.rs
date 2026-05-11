@@ -11,7 +11,7 @@ const RETRY_DELAY: Duration = Duration::from_millis(500);
 const RETRY_JITTER_MAX_MS: u64 = 200;
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 
-// ── HTTP backend ──────────────────────────────────────────────────────────────
+// ── Internal HTTP client ──────────────────────────────────────────────────────
 
 struct CachedList {
     data: Vec<String>,
@@ -155,231 +155,6 @@ impl HttpInner {
     }
 }
 
-// ── Mock backend ──────────────────────────────────────────────────────────────
-
-pub struct MockInner {
-    pub device_name: String,
-    pub state: RwLock<WledState>,
-    pub info: WledInfo,
-    pub effects: Vec<String>,
-    pub palettes: Vec<String>,
-    pub presets: RwLock<HashMap<i32, PresetInfo>>,
-}
-
-// ── Client kind ───────────────────────────────────────────────────────────────
-
-enum ClientKind {
-    Http(Arc<HttpInner>),
-    Mock(Arc<MockInner>),
-}
-
-impl ClientKind {
-    fn device_name(&self) -> &str {
-        match self {
-            ClientKind::Http(i) => &i.device_name,
-            ClientKind::Mock(i) => &i.device_name,
-        }
-    }
-
-    async fn get_state(&self) -> Result<WledState, WledError> {
-        match self {
-            ClientKind::Http(i) => i.get_with_retry("/json/state").await,
-            ClientKind::Mock(i) => {
-                // Simulate HTTP JSON round-trip to catch serialization issues.
-                let state = i.state.read().await.clone();
-                let json = serde_json::to_value(&state)?;
-                serde_json::from_value(json).map_err(WledError::from)
-            }
-        }
-    }
-
-    async fn get_info(&self) -> Result<WledInfo, WledError> {
-        match self {
-            ClientKind::Http(i) => i.get_with_retry("/json/info").await,
-            ClientKind::Mock(i) => {
-                let info = i.info.clone();
-                let json = serde_json::to_value(&info)?;
-                serde_json::from_value(json).map_err(WledError::from)
-            }
-        }
-    }
-
-    async fn get_full_state(&self) -> Result<WledFullState, WledError> {
-        match self {
-            ClientKind::Http(i) => i.get_with_retry("/json").await,
-            ClientKind::Mock(i) => Ok(WledFullState {
-                state: i.state.read().await.clone(),
-                info: i.info.clone(),
-                effects: i.effects.clone(),
-                palettes: i.palettes.clone(),
-            }),
-        }
-    }
-
-    async fn list_effects(&self) -> Result<Vec<String>, WledError> {
-        match self {
-            ClientKind::Http(i) => {
-                {
-                    let cache = i.effects_cache.read().await;
-                    if let Some(c) = cache.as_ref() {
-                        if c.is_valid() {
-                            return Ok(c.data.clone());
-                        }
-                    }
-                }
-                let data: Vec<String> = i.get_with_retry("/json/effects").await?;
-                *i.effects_cache.write().await = Some(CachedList::new(data.clone()));
-                Ok(data)
-            }
-            ClientKind::Mock(i) => Ok(i.effects.clone()),
-        }
-    }
-
-    async fn list_palettes(&self) -> Result<Vec<String>, WledError> {
-        match self {
-            ClientKind::Http(i) => {
-                {
-                    let cache = i.palettes_cache.read().await;
-                    if let Some(c) = cache.as_ref() {
-                        if c.is_valid() {
-                            return Ok(c.data.clone());
-                        }
-                    }
-                }
-                let data: Vec<String> = i.get_with_retry("/json/palettes").await?;
-                *i.palettes_cache.write().await = Some(CachedList::new(data.clone()));
-                Ok(data)
-            }
-            ClientKind::Mock(i) => Ok(i.palettes.clone()),
-        }
-    }
-
-    async fn get_palette_colors(&self, palette_id: u16) -> Result<serde_json::Value, WledError> {
-        match self {
-            ClientKind::Http(i) => {
-                let path = format!("/json/palettes?v=1&cb={}", palette_id);
-                i.get_with_retry(&path).await
-            }
-            ClientKind::Mock(_) => Ok(serde_json::json!([])),
-        }
-    }
-
-    async fn post_state(&self, request: &WledStateRequest) -> Result<(), WledError> {
-        match self {
-            ClientKind::Http(i) => {
-                let body = serde_json::to_value(request)?;
-                i.post_void_with_retry("/json/state", &body).await
-            }
-            ClientKind::Mock(i) => {
-                // Simulate the HTTP round-trip: serialize request to JSON, then
-                // deserialize back and apply. This ensures the mock tests the
-                // same serialization path as the real HTTP backend.
-                let body = serde_json::to_value(request)?;
-                let applied: WledStateRequest = serde_json::from_value(body)?;
-                let mut state = i.state.write().await;
-                if let Some(on) = applied.on {
-                    state.on = on;
-                }
-                if let Some(bri) = applied.brightness {
-                    state.brightness = bri;
-                }
-                if let Some(transition) = applied.transition {
-                    state.transition = transition;
-                }
-                if let Some(ps) = applied.preset_slot {
-                    state.preset_slot = ps;
-                }
-                if let Some(lor) = applied.live_override {
-                    state.live_override = lor;
-                }
-                if let Some(mainseg) = applied.main_segment {
-                    state.main_segment = mainseg;
-                }
-                if let Some(segs) = applied.segments {
-                    for seg_req in segs {
-                        let id = seg_req.id.unwrap_or(0) as usize;
-                        while state.segments.len() <= id {
-                            state.segments.push(Segment::default());
-                        }
-                        let seg = &mut state.segments[id];
-                        if let Some(on) = seg_req.on {
-                            seg.on = on;
-                        }
-                        if let Some(bri) = seg_req.brightness {
-                            seg.brightness = bri;
-                        }
-                        if let Some(col) = seg_req.colors {
-                            seg.colors = col;
-                        }
-                        if let Some(fx) = seg_req.effect_id {
-                            seg.effect_id = fx;
-                        }
-                        if let Some(sx) = seg_req.effect_speed {
-                            seg.effect_speed = sx;
-                        }
-                        if let Some(ix) = seg_req.effect_intensity {
-                            seg.effect_intensity = ix;
-                        }
-                        if let Some(pal) = seg_req.palette_id {
-                            seg.palette_id = pal;
-                        }
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-
-    async fn list_presets(&self) -> Result<HashMap<i32, PresetInfo>, WledError> {
-        match self {
-            ClientKind::Http(i) => i.get_with_retry("/json/presets").await,
-            ClientKind::Mock(i) => Ok(i.presets.read().await.clone()),
-        }
-    }
-
-    async fn configure_ntp(&self, body: &serde_json::Value) -> Result<(), WledError> {
-        match self {
-            ClientKind::Http(i) => i.post_void_with_retry("/json/cfg", body).await,
-            ClientKind::Mock(_) => Ok(()),
-        }
-    }
-
-    async fn configure_dusk_schedule(&self, body: &serde_json::Value) -> Result<(), WledError> {
-        match self {
-            ClientKind::Http(i) => i.post_void_with_retry("/json/cfg", body).await,
-            ClientKind::Mock(_) => Ok(()),
-        }
-    }
-
-    async fn raw_request<T: serde::de::DeserializeOwned>(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<serde_json::Value>,
-    ) -> Result<T, WledError> {
-        match self {
-            ClientKind::Http(i) => match method.to_uppercase().as_str() {
-                "GET" => i.get_with_retry(path).await,
-                "POST" => {
-                    let b = body.unwrap_or(serde_json::Value::Null);
-                    i.post(path, &b).await
-                }
-                m => Err(WledError::ConfigError(format!("Unsupported method: {}", m))),
-            },
-            ClientKind::Mock(_) => Err(WledError::ConfigError(
-                "raw_request not supported on mock client".to_string(),
-            )),
-        }
-    }
-
-    async fn mock_get_state(&self) -> Option<WledState> {
-        match self {
-            ClientKind::Mock(i) => Some(i.state.read().await.clone()),
-            _ => None,
-        }
-    }
-}
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// HTTP client for a single WLED device.
@@ -388,7 +163,7 @@ impl ClientKind {
 /// transient network errors before surfacing the error.
 #[derive(Clone)]
 pub struct WledClient {
-    inner: Arc<ClientKind>,
+    inner: Arc<HttpInner>,
 }
 
 impl WledClient {
@@ -407,40 +182,55 @@ impl WledClient {
         }
     }
 
-    /// Builder for a mock client used in unit tests.
-    pub fn mock() -> WledClientMockBuilder {
-        WledClientMockBuilder::default()
-    }
-
     /// The human-readable device name used in error messages.
     pub fn device_name(&self) -> &str {
-        self.inner.device_name()
+        &self.inner.device_name
     }
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn get_state(&self) -> Result<WledState, WledError> {
-        self.inner.get_state().await
+        self.inner.get_with_retry("/json/state").await
     }
 
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn get_info(&self) -> Result<WledInfo, WledError> {
-        self.inner.get_info().await
+        self.inner.get_with_retry("/json/info").await
     }
 
     pub async fn get_full_state(&self) -> Result<WledFullState, WledError> {
-        self.inner.get_full_state().await
+        self.inner.get_with_retry("/json").await
     }
 
     /// Returns effect names. Cached for 1 hour.
     pub async fn list_effects(&self) -> Result<Vec<String>, WledError> {
-        self.inner.list_effects().await
+        {
+            let cache = self.inner.effects_cache.read().await;
+            if let Some(c) = cache.as_ref() {
+                if c.is_valid() {
+                    return Ok(c.data.clone());
+                }
+            }
+        }
+        let data: Vec<String> = self.inner.get_with_retry("/json/effects").await?;
+        *self.inner.effects_cache.write().await = Some(CachedList::new(data.clone()));
+        Ok(data)
     }
 
     /// Returns palette names. Cached for 1 hour.
     pub async fn list_palettes(&self) -> Result<Vec<String>, WledError> {
-        self.inner.list_palettes().await
+        {
+            let cache = self.inner.palettes_cache.read().await;
+            if let Some(c) = cache.as_ref() {
+                if c.is_valid() {
+                    return Ok(c.data.clone());
+                }
+            }
+        }
+        let data: Vec<String> = self.inner.get_with_retry("/json/palettes").await?;
+        *self.inner.palettes_cache.write().await = Some(CachedList::new(data.clone()));
+        Ok(data)
     }
 
     /// Returns raw palette color data for the given palette index.
@@ -448,7 +238,8 @@ impl WledClient {
         &self,
         palette_id: u16,
     ) -> Result<serde_json::Value, WledError> {
-        self.inner.get_palette_colors(palette_id).await
+        let path = format!("/json/palettes?v=1&cb={}", palette_id);
+        self.inner.get_with_retry(&path).await
     }
 
     /// Returns `true` if the device responds to a state request.
@@ -529,7 +320,8 @@ impl WledClient {
     /// Sends an arbitrary state update. Only `Some` fields are applied.
     #[tracing::instrument(skip(self, request), fields(device = %self.device_name()))]
     pub async fn set_state(&self, request: WledStateRequest) -> Result<(), WledError> {
-        self.inner.post_state(&request).await
+        let body = serde_json::to_value(&request)?;
+        self.inner.post_void_with_retry("/json/state", &body).await
     }
 
     // ── Presets ───────────────────────────────────────────────────────────────
@@ -537,7 +329,7 @@ impl WledClient {
     /// Returns all presets keyed by their integer slot ID.
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn list_presets(&self) -> Result<HashMap<i32, PresetInfo>, WledError> {
-        self.inner.list_presets().await
+        self.inner.get_with_retry("/json/presets").await
     }
 
     /// Activates a preset by slot ID.
@@ -588,7 +380,7 @@ impl WledClient {
                 "ins": [{ "ntp": config.server.as_str() }]
             }
         });
-        self.inner.configure_ntp(&body).await
+        self.inner.post_void_with_retry("/json/cfg", &body).await
     }
 
     /// Configures a dusk-based schedule timer via `/json/cfg`.
@@ -613,7 +405,7 @@ impl WledClient {
                 }]
             }
         });
-        self.inner.configure_dusk_schedule(&body).await
+        self.inner.post_void_with_retry("/json/cfg", &body).await
     }
 
     // ── Escape hatch ──────────────────────────────────────────────────────────
@@ -625,15 +417,14 @@ impl WledClient {
         path: &str,
         body: Option<serde_json::Value>,
     ) -> Result<T, WledError> {
-        self.inner.raw_request(method, path, body).await
-    }
-
-    // ── Test helpers ──────────────────────────────────────────────────────────
-
-    /// Returns the mock inner state for assertions in tests.
-    /// Returns `None` on a real HTTP client.
-    pub async fn mock_get_state(&self) -> Option<WledState> {
-        self.inner.mock_get_state().await
+        match method.to_uppercase().as_str() {
+            "GET" => self.inner.get_with_retry(path).await,
+            "POST" => {
+                let b = body.unwrap_or(serde_json::Value::Null);
+                self.inner.post(path, &b).await
+            }
+            m => Err(WledError::ConfigError(format!("Unsupported method: {}", m))),
+        }
     }
 }
 
@@ -672,232 +463,23 @@ impl WledClientBuilder {
             };
 
         Ok(WledClient {
-            inner: Arc::new(ClientKind::Http(Arc::new(HttpInner {
+            inner: Arc::new(HttpInner {
                 http,
                 base_url,
                 device_name,
                 effects_cache: RwLock::new(None),
                 palettes_cache: RwLock::new(None),
-            }))),
+            }),
         })
     }
 }
 
-#[derive(Default)]
-pub struct WledClientMockBuilder {
-    state: WledState,
-    info: WledInfo,
-    effects: Vec<String>,
-    palettes: Vec<String>,
-    presets: HashMap<i32, PresetInfo>,
-    device_name: String,
-}
-
-impl WledClientMockBuilder {
-    pub fn with_state(mut self, state: WledState) -> Self {
-        self.state = state;
-        self
-    }
-
-    pub fn with_info(mut self, info: WledInfo) -> Self {
-        self.info = info;
-        self
-    }
-
-    pub fn with_effects(mut self, effects: Vec<String>) -> Self {
-        self.effects = effects;
-        self
-    }
-
-    pub fn with_palettes(mut self, palettes: Vec<String>) -> Self {
-        self.palettes = palettes;
-        self
-    }
-
-    pub fn with_preset(mut self, id: i32, preset: PresetInfo) -> Self {
-        self.presets.insert(id, preset);
-        self
-    }
-
-    pub fn with_device_name(mut self, name: impl Into<String>) -> Self {
-        self.device_name = name.into();
-        self
-    }
-
-    pub fn build(self) -> WledClient {
-        WledClient {
-            inner: Arc::new(ClientKind::Mock(Arc::new(MockInner {
-                device_name: if self.device_name.is_empty() {
-                    "mock-device".to_string()
-                } else {
-                    self.device_name
-                },
-                state: RwLock::new(self.state),
-                info: self.info,
-                effects: if self.effects.is_empty() {
-                    vec![
-                        "Solid".to_string(),
-                        "Blink".to_string(),
-                        "Rainbow".to_string(),
-                        "Chase".to_string(),
-                    ]
-                } else {
-                    self.effects
-                },
-                palettes: if self.palettes.is_empty() {
-                    vec![
-                        "Default".to_string(),
-                        "Random Cycle".to_string(),
-                        "Cloud".to_string(),
-                    ]
-                } else {
-                    self.palettes
-                },
-                presets: RwLock::new(self.presets),
-            }))),
-        }
-    }
-}
-
-// ── Unit tests ────────────────────────────────────────────────────────────────
+// ── Unit tests (wiremock) ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn mock() -> WledClient {
-        WledClient::mock()
-            .with_device_name("test-device")
-            .with_state(WledState {
-                on: true,
-                brightness: 200,
-                ..Default::default()
-            })
-            .with_preset(
-                1,
-                PresetInfo {
-                    name: "Warm White".to_string(),
-                    ..Default::default()
-                },
-            )
-            .with_preset(
-                2,
-                PresetInfo {
-                    name: "Party Mode".to_string(),
-                    ..Default::default()
-                },
-            )
-            .build()
-    }
-
-    #[tokio::test]
-    async fn test_mock_get_state() {
-        let client = mock();
-        let state = client.get_state().await.unwrap();
-        assert!(state.on);
-        assert_eq!(state.brightness, 200);
-    }
-
-    #[tokio::test]
-    async fn test_mock_set_power() {
-        let client = mock();
-        client.set_power(false).await.unwrap();
-        let state = client.mock_get_state().await.unwrap();
-        assert!(!state.on);
-    }
-
-    #[tokio::test]
-    async fn test_mock_set_brightness() {
-        let client = mock();
-        client.set_brightness(100).await.unwrap();
-        let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.brightness, 100);
-    }
-
-    #[tokio::test]
-    async fn test_mock_set_color() {
-        let client = mock();
-        client.set_color(255, 0, 0).await.unwrap();
-        let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.segments[0].colors[0], [255, 0, 0]);
-    }
-
-    #[tokio::test]
-    async fn test_mock_activate_preset() {
-        let client = mock();
-        client.activate_preset(1).await.unwrap();
-        let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.preset_slot, 1);
-    }
-
-    #[tokio::test]
-    async fn test_mock_activate_preset_by_name() {
-        let client = mock();
-        client.activate_preset_by_name("Party Mode").await.unwrap();
-        let state = client.mock_get_state().await.unwrap();
-        assert_eq!(state.preset_slot, 2);
-    }
-
-    #[tokio::test]
-    async fn test_mock_activate_unknown_preset_by_name() {
-        let client = mock();
-        let result = client.activate_preset_by_name("Nonexistent").await;
-        assert!(matches!(result, Err(WledError::PresetNotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_mock_list_effects() {
-        let client = mock();
-        let effects = client.list_effects().await.unwrap();
-        assert!(!effects.is_empty());
-        assert!(effects.contains(&"Solid".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_mock_list_palettes() {
-        let client = mock();
-        let palettes = client.list_palettes().await.unwrap();
-        assert!(!palettes.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_mock_list_presets() {
-        let client = mock();
-        let presets = client.list_presets().await.unwrap();
-        assert_eq!(presets.len(), 2);
-        assert_eq!(presets[&1].name, "Warm White");
-        assert_eq!(presets[&2].name, "Party Mode");
-    }
-
-    #[tokio::test]
-    async fn test_mock_ping() {
-        let client = mock();
-        assert!(client.ping().await.unwrap());
-    }
-
-    #[test]
-    fn test_builder_rejects_bad_timeout() {
-        // Duration::ZERO is valid for reqwest, so just verify the builder pattern
-        let result = WledClient::builder("192.168.1.1")
-            .device_name("living-room")
-            .build();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_builder_adds_http_prefix() {
-        let client = WledClient::new("192.168.1.100").unwrap();
-        // device_name should default to the address
-        assert_eq!(client.device_name(), "192.168.1.100");
-    }
-}
-
-// ── HTTP error tests (wiremock) ───────────────────────────────────────────────
-
-#[cfg(test)]
-mod http_tests {
-    use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// Helper that builds an HTTP client pointed at the wiremock server.
@@ -906,6 +488,27 @@ mod http_tests {
             .device_name("wiremock-device")
             .build()
             .unwrap()
+    }
+
+    // ── GET /json/state ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_state() {
+        let server = MockServer::start().await;
+        let state = WledState {
+            on: true,
+            brightness: 200,
+            ..Default::default()
+        };
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&state))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await.unwrap();
+        assert!(result.on);
+        assert_eq!(result.brightness, 200);
     }
 
     #[tokio::test]
@@ -928,8 +531,6 @@ mod http_tests {
     #[tokio::test]
     async fn test_network_error_on_invalid_json_body() {
         let server = MockServer::start().await;
-        // Server returns 200 OK but the body is not valid JSON.
-        // reqwest's json() decoder fails → WledError::Network (retried once).
         Mock::given(method("GET"))
             .and(path("/json/state"))
             .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
@@ -947,7 +548,6 @@ mod http_tests {
     #[tokio::test]
     async fn test_timeout_when_server_is_slow() {
         let server = MockServer::start().await;
-        // Server delays longer than the client's timeout.
         Mock::given(method("GET"))
             .and(path("/json/state"))
             .respond_with(
@@ -956,8 +556,6 @@ mod http_tests {
             .mount(&server)
             .await;
 
-        // Short timeout so the test completes quickly (retried once = ~200 ms
-        // of actual waiting plus the 500 ms RETRY_DELAY between attempts).
         let client = WledClient::builder(server.uri())
             .device_name("wiremock-device")
             .timeout(std::time::Duration::from_millis(50))
@@ -970,5 +568,562 @@ mod http_tests {
             "expected Timeout, got {:?}",
             result
         );
+    }
+
+    // ── GET /json/info ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_info() {
+        let server = MockServer::start().await;
+        let info = WledInfo {
+            firmware_version: "0.14.0".to_string(),
+            name: "test-wled".to_string(),
+            led_info: LedInfo {
+                count: 300,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        Mock::given(method("GET"))
+            .and(path("/json/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&info))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_info().await.unwrap();
+        assert_eq!(result.firmware_version, "0.14.0");
+        assert_eq!(result.name, "test-wled");
+        assert_eq!(result.led_info.count, 300);
+    }
+
+    // ── GET /json (full state) ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_full_state() {
+        let server = MockServer::start().await;
+        let full = WledFullState {
+            state: WledState {
+                on: true,
+                brightness: 150,
+                ..Default::default()
+            },
+            info: WledInfo {
+                name: "full-test".to_string(),
+                ..Default::default()
+            },
+            effects: vec!["Solid".to_string(), "Blink".to_string()],
+            palettes: vec!["Default".to_string()],
+        };
+        Mock::given(method("GET"))
+            .and(path("/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&full))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_full_state().await.unwrap();
+        assert!(result.state.on);
+        assert_eq!(result.info.name, "full-test");
+        assert_eq!(result.effects.len(), 2);
+    }
+
+    // ── GET /json/effects ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_effects() {
+        let server = MockServer::start().await;
+        let effects = vec![
+            "Solid".to_string(),
+            "Blink".to_string(),
+            "Rainbow".to_string(),
+        ];
+        Mock::given(method("GET"))
+            .and(path("/json/effects"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&effects))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).list_effects().await.unwrap();
+        assert_eq!(result, effects);
+
+        // Second call should use cache (no additional request needed).
+        let result2 = client_for(&server).list_effects().await.unwrap();
+        assert_eq!(result2, effects);
+    }
+
+    // ── GET /json/palettes ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_palettes() {
+        let server = MockServer::start().await;
+        let palettes = vec!["Default".to_string(), "Cloud".to_string()];
+        Mock::given(method("GET"))
+            .and(path("/json/palettes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&palettes))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).list_palettes().await.unwrap();
+        assert_eq!(result, palettes);
+    }
+
+    // ── GET /json/palettes?v=1&cb={id} ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_palette_colors() {
+        let server = MockServer::start().await;
+        let colors = serde_json::json!([[255, 0, 0], [0, 255, 0], [0, 0, 255]]);
+        Mock::given(method("GET"))
+            .and(path("/json/palettes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&colors))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_palette_colors(5).await.unwrap();
+        assert_eq!(result, colors);
+    }
+
+    // ── GET /json/presets ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_presets() {
+        let server = MockServer::start().await;
+        let mut presets = HashMap::new();
+        presets.insert(
+            1,
+            PresetInfo {
+                name: "Warm White".to_string(),
+                ..Default::default()
+            },
+        );
+        presets.insert(
+            2,
+            PresetInfo {
+                name: "Party Mode".to_string(),
+                ..Default::default()
+            },
+        );
+        Mock::given(method("GET"))
+            .and(path("/json/presets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&presets))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).list_presets().await.unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[&1].name, "Warm White");
+        assert_eq!(result[&2].name, "Party Mode");
+    }
+
+    // ── POST /json/state ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_set_power() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"on": false})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).set_power(false).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_set_brightness() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"bri": 100})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).set_brightness(100).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_set_color() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({
+                "seg": [{"id": 0, "col": [[255, 0, 0], [0, 0, 0], [0, 0, 0]]}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).set_color(255, 0, 0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_set_effect() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({
+                "seg": [{"id": 0, "fx": 5}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).set_effect(5).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_set_palette() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({
+                "seg": [{"id": 0, "pal": 3}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).set_palette(3).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_set_transition() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"transition": 15})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).set_transition(15).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_activate_preset() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"ps": 2})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).activate_preset(2).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_activate_preset_by_name() {
+        let server = MockServer::start().await;
+        let mut presets = HashMap::new();
+        presets.insert(
+            3,
+            PresetInfo {
+                name: "Party Mode".to_string(),
+                ..Default::default()
+            },
+        );
+        Mock::given(method("GET"))
+            .and(path("/json/presets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&presets))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"ps": 3})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .activate_preset_by_name("Party Mode")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_activate_unknown_preset_by_name() {
+        let server = MockServer::start().await;
+        let presets = HashMap::<i32, PresetInfo>::new();
+        Mock::given(method("GET"))
+            .and(path("/json/presets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&presets))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server)
+            .activate_preset_by_name("Nonexistent")
+            .await;
+        assert!(matches!(result, Err(WledError::PresetNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_save_preset() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"psave": 7, "n": "My Preset"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .save_preset(7, "My Preset")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_preset() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"pdel": 4})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        client_for(&server).delete_preset(4).await.unwrap();
+    }
+
+    // ── ping ────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_ping_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        assert!(client_for(&server).ping().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_ping_timeout_returns_false() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(
+                ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(300)),
+            )
+            .mount(&server)
+            .await;
+
+        let client = WledClient::builder(server.uri())
+            .device_name("wiremock-device")
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .unwrap();
+
+        assert!(!client.ping().await.unwrap());
+    }
+
+    // ── POST /json/cfg (schedule) ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_configure_ntp() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/cfg"))
+            .and(body_json(serde_json::json!({
+                "nw": { "ins": [{ "ntp": "pool.ntp.org" }] }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let config = NtpConfig {
+            server: NtpServer::hostname("pool.ntp.org"),
+        };
+        client_for(&server).configure_ntp(&config).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_configure_dusk_schedule() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/cfg"))
+            .and(body_json(serde_json::json!({
+                "timers": {
+                    "ins": [
+                        { "en": true, "hour": 255, "min": 0, "macro": 3, "dow": 127 },
+                        { "en": true, "hour": 0, "min": 30, "macro": 0, "dow": 127 }
+                    ]
+                }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let config = DuskScheduleConfig {
+            preset_slot: 3,
+            off_hour: 0,
+            off_minute: 30,
+            enabled: true,
+        };
+        client_for(&server)
+            .configure_dusk_schedule(&config)
+            .await
+            .unwrap();
+    }
+
+    // ── raw_request ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_raw_request_get() {
+        let server = MockServer::start().await;
+        let state = WledState {
+            on: true,
+            brightness: 77,
+            ..Default::default()
+        };
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&state))
+            .mount(&server)
+            .await;
+
+        let result: WledState = client_for(&server)
+            .raw_request("GET", "/json/state", None)
+            .await
+            .unwrap();
+        assert_eq!(result.brightness, 77);
+    }
+
+    #[tokio::test]
+    async fn test_raw_request_post() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"on": true})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let result: serde_json::Value = client_for(&server)
+            .raw_request("POST", "/json/state", Some(serde_json::json!({"on": true})))
+            .await
+            .unwrap();
+        assert!(result.is_object());
+    }
+
+    #[tokio::test]
+    async fn test_raw_request_unsupported_method() {
+        let server = MockServer::start().await;
+        let result: Result<serde_json::Value, _> = client_for(&server)
+            .raw_request("DELETE", "/json/state", None)
+            .await;
+        assert!(matches!(result, Err(WledError::ConfigError(_))));
+    }
+
+    // ── Builder tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_builder_rejects_bad_timeout() {
+        let result = WledClient::builder("192.168.1.1")
+            .device_name("living-room")
+            .build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_builder_adds_http_prefix() {
+        let client = WledClient::new("192.168.1.100").unwrap();
+        assert_eq!(client.device_name(), "192.168.1.100");
+    }
+
+    #[test]
+    fn test_device_name_override() {
+        let client = WledClient::builder("192.168.1.100")
+            .device_name("kitchen")
+            .build()
+            .unwrap();
+        assert_eq!(client.device_name(), "kitchen");
+    }
+
+    // ── Retry tests ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_retry_on_500_then_success() {
+        let server = MockServer::start().await;
+        // First request: 500 (retried). Second request: 200 OK.
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_network_error_then_success() {
+        let server = MockServer::start().await;
+        // First request: invalid JSON (Network error, retried).
+        // Second request: valid JSON.
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_no_retry_on_400() {
+        let server = MockServer::start().await;
+        // 400 is not retriable — only one request should be made.
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("Bad Request"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await;
+        assert!(
+            matches!(result, Err(WledError::Api { status: 400, .. })),
+            "expected Api(400), got {:?}",
+            result
+        );
+    }
+
+    // ── Cache tests ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_effects_cache_avoids_second_request() {
+        let server = MockServer::start().await;
+        let effects = vec!["Solid".to_string(), "Blink".to_string()];
+        Mock::given(method("GET"))
+            .and(path("/json/effects"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&effects))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let r1 = client.list_effects().await.unwrap();
+        let r2 = client.list_effects().await.unwrap();
+        assert_eq!(r1, effects);
+        assert_eq!(r2, effects);
+        // wiremock will panic if the expectation of 1 request is violated.
     }
 }

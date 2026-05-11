@@ -7,7 +7,7 @@ pub mod telemetry;
 pub mod tools;
 pub mod types;
 
-pub use client::{WledClient, WledClientBuilder, WledClientMockBuilder};
+pub use client::{WledClient, WledClientBuilder};
 pub use error::WledError;
 pub use fleet::WledFleet;
 pub use sync_group::WledSyncGroup;
