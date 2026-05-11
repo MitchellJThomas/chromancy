@@ -36,7 +36,7 @@ Design decisions should favor:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  MCP Client (Claude Desktop / Claude Code / any client) │
+│  MCP Client (Claude Desktop / Claude Code / Pi.dev / any client) │
 └─────────────────────────────────────────────────────────┘
                           │
                           │ MCP Protocol (stdio)

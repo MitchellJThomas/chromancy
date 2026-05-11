@@ -26,14 +26,14 @@ use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    Resource,
     logs::LoggerProvider,
     metrics::{PeriodicReader, SdkMeterProvider},
     runtime,
     trace::TracerProvider,
+    Resource,
 };
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_VERSION};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::error::WledError;
 
@@ -104,6 +104,18 @@ pub struct TelemetryGuards {
     logger_provider: LoggerProvider,
 }
 
+impl TelemetryGuards {
+    /// Create a no-op guard for when telemetry is disabled.
+    /// Shutdown is a no-op on these empty providers.
+    pub fn noop() -> Self {
+        Self {
+            tracer_provider: TracerProvider::builder().build(),
+            meter_provider: SdkMeterProvider::builder().build(),
+            logger_provider: LoggerProvider::builder().build(),
+        }
+    }
+}
+
 impl Drop for TelemetryGuards {
     fn drop(&mut self) {
         if let Err(e) = self.tracer_provider.shutdown() {
@@ -130,8 +142,8 @@ pub fn init() -> Result<TelemetryGuards, WledError> {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
 
-    let service_name = std::env::var("OTEL_SERVICE_NAME")
-        .unwrap_or_else(|_| "chromancy".to_string());
+    let service_name =
+        std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "chromancy".to_string());
 
     let resource = Resource::new(vec![
         KeyValue::new(SERVICE_NAME, service_name),

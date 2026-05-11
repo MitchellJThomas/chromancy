@@ -368,42 +368,111 @@ fn leader_state_to_request(state: &WledState) -> WledStateRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn make_leader(name: &str) -> WledClient {
-        WledClient::mock()
-            .with_device_name(name)
-            .with_state(WledState {
-                on: true,
-                brightness: 200,
-                preset_slot: 3,
-                segments: vec![Segment {
-                    id: 0,
-                    colors: vec![[255, 0, 0], [0, 0, 0], [0, 0, 0]],
-                    ..Default::default()
-                }],
+    /// Build a WledClient pointed at a wiremock server.
+    fn client_for(server: &MockServer, name: &str) -> WledClient {
+        WledClient::builder(server.uri())
+            .device_name(name)
+            .build()
+            .unwrap()
+    }
+
+    /// Default leader state returned by wiremock.
+    fn leader_state() -> WledState {
+        WledState {
+            on: true,
+            brightness: 200,
+            preset_slot: 3,
+            segments: vec![Segment {
+                id: 0,
+                colors: vec![[255, 0, 0], [0, 0, 0], [0, 0, 0]],
                 ..Default::default()
-            })
-            .with_preset(3, PresetInfo { name: "Red Party".to_string(), ..Default::default() })
-            .build()
+            }],
+            ..Default::default()
+        }
     }
 
-    fn make_follower(name: &str, preset: i32) -> WledClient {
-        WledClient::mock()
-            .with_device_name(name)
-            .with_state(WledState { preset_slot: preset, ..Default::default() })
-            .build()
+    /// Default leader presets returned by wiremock.
+    fn leader_presets() -> HashMap<i32, PresetInfo> {
+        let mut m = HashMap::new();
+        m.insert(
+            3,
+            PresetInfo {
+                name: "Red Party".to_string(),
+                ..Default::default()
+            },
+        );
+        m
     }
 
-    fn make_group() -> WledSyncGroup {
-        let mut g = WledSyncGroup::new("test-group", "leader-1", make_leader("leader-1"), "DigQuad");
-        g.add_follower("follower-1", make_follower("follower-1", 3), "DigUno");
-        g.add_follower("follower-2", make_follower("follower-2", 99), "Dig2Go");
-        g
+    /// Default effect list.
+    fn effects() -> Vec<String> {
+        vec![
+            "Solid".to_string(),
+            "Blink".to_string(),
+            "Rainbow".to_string(),
+        ]
+    }
+
+    /// Set up wiremock stubs for a leader device.
+    async fn mount_leader_stubs(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&leader_state()))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/json/presets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&leader_presets()))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/json/effects"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&effects()))
+            .mount(server)
+            .await;
+    }
+
+    /// Set up wiremock stubs for a follower with the given preset.
+    async fn mount_follower_stubs(server: &MockServer, preset: i32) {
+        let state = WledState {
+            preset_slot: preset,
+            ..Default::default()
+        };
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&state))
+            .mount(server)
+            .await;
+    }
+
+    /// Build a sync group with wiremock-backed leader + two followers.
+    async fn make_group() -> (WledSyncGroup, MockServer, MockServer, MockServer) {
+        let leader_srv = MockServer::start().await;
+        let f1_srv = MockServer::start().await;
+        let f2_srv = MockServer::start().await;
+
+        mount_leader_stubs(&leader_srv).await;
+        mount_follower_stubs(&f1_srv, 3).await;
+        mount_follower_stubs(&f2_srv, 99).await;
+
+        let mut g = WledSyncGroup::new(
+            "test-group",
+            "leader-1",
+            client_for(&leader_srv, "leader-1"),
+            "DigQuad",
+        );
+        g.add_follower("follower-1", client_for(&f1_srv, "follower-1"), "DigUno");
+        g.add_follower("follower-2", client_for(&f2_srv, "follower-2"), "Dig2Go");
+
+        (g, leader_srv, f1_srv, f2_srv)
     }
 
     #[tokio::test]
     async fn test_group_get_state() {
-        let g = make_group();
+        let (g, _ls, _f1, _f2) = make_group().await;
         let state = g.get_state().await.unwrap();
         assert!(state.on);
         assert_eq!(state.brightness, 200);
@@ -411,72 +480,118 @@ mod tests {
 
     #[tokio::test]
     async fn test_group_set_power() {
-        let g = make_group();
+        let (g, ls, _f1, _f2) = make_group().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"on": false})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&ls)
+            .await;
+
         g.set_power(false).await.unwrap();
-        assert!(!g.get_state().await.unwrap().on);
     }
 
     #[tokio::test]
     async fn test_group_set_brightness() {
-        let g = make_group();
+        let (g, ls, _f1, _f2) = make_group().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"bri": 50})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&ls)
+            .await;
+
         g.set_brightness(50).await.unwrap();
-        assert_eq!(g.get_state().await.unwrap().brightness, 50);
     }
 
     #[tokio::test]
     async fn test_group_activate_preset() {
-        let g = make_group();
+        let (g, ls, _f1, _f2) = make_group().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({"ps": 3})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&ls)
+            .await;
+
         g.activate_preset("Red Party").await.unwrap();
-        assert_eq!(g.get_state().await.unwrap().preset_slot, 3);
     }
 
     #[tokio::test]
     async fn test_group_set_color() {
-        let g = make_group();
+        let (g, ls, _f1, _f2) = make_group().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({
+                "seg": [{"id": 0, "col": [[0, 255, 0], [0, 0, 0], [0, 0, 0]]}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&ls)
+            .await;
+
         g.set_color(0, 255, 0).await.unwrap();
-        let state = g.get_state().await.unwrap();
-        assert_eq!(state.segments[0].colors[0], [0, 255, 0]);
     }
 
     #[tokio::test]
     async fn test_group_set_effect() {
-        let g = make_group();
+        let (g, ls, _f1, _f2) = make_group().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({
+                "seg": [{"id": 0, "fx": 1}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&ls)
+            .await;
+
         g.set_effect("Blink").await.unwrap();
-        let state = g.get_state().await.unwrap();
-        // "Blink" is index 1 in the default mock effect list
-        assert_eq!(state.segments[0].effect_id, 1);
     }
 
     #[tokio::test]
     async fn test_group_set_unknown_effect() {
-        let g = make_group();
+        let (g, _ls, _f1, _f2) = make_group().await;
         let result = g.set_effect("Doesnt Exist").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_group_set_channel_color() {
-        let g = make_group();
+        let (g, ls, _f1, _f2) = make_group().await;
+        Mock::given(method("POST"))
+            .and(path("/json/state"))
+            .and(body_json(serde_json::json!({
+                "seg": [{"id": 0, "col": [[0, 0, 255], [0, 0, 0], [0, 0, 0]]}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&ls)
+            .await;
+
         g.set_channel_color(1, 0, 0, 255).await.unwrap();
-        let state = g.get_state().await.unwrap();
-        assert_eq!(state.segments[0].colors[0], [0, 0, 255]);
     }
 
     #[tokio::test]
     async fn test_group_channel_zero_invalid() {
-        let g = make_group();
+        let (g, _ls, _f1, _f2) = make_group().await;
         let result = g.set_channel_color(0, 255, 0, 0).await;
         assert!(matches!(result, Err(WledError::InvalidChannel { .. })));
     }
 
     #[tokio::test]
     async fn test_check_sync_health_detects_drift() {
-        let g = make_group();
+        let (g, _ls, _f1, _f2) = make_group().await;
         let report = g.check_sync_health().await.unwrap();
         // follower-1 is in sync (ps=3), follower-2 is drifted (ps=99)
         assert!(!report.healthy);
-        let f1 = report.devices.iter().find(|d| d.device_name == "follower-1").unwrap();
-        let f2 = report.devices.iter().find(|d| d.device_name == "follower-2").unwrap();
+        let f1 = report
+            .devices
+            .iter()
+            .find(|d| d.device_name == "follower-1")
+            .unwrap();
+        let f2 = report
+            .devices
+            .iter()
+            .find(|d| d.device_name == "follower-2")
+            .unwrap();
         assert!(f1.is_healthy);
         assert!(!f2.is_healthy);
         assert_eq!(f2.device_preset, 99);
@@ -484,25 +599,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_sync_health_all_healthy() {
-        let mut g = WledSyncGroup::new("g", "l", make_leader("l"), "DigUno");
-        g.add_follower("f1", make_follower("f1", 3), "DigUno");
+        let ls = MockServer::start().await;
+        let f1 = MockServer::start().await;
+        mount_leader_stubs(&ls).await;
+        mount_follower_stubs(&f1, 3).await;
+
+        let mut g = WledSyncGroup::new("g", "l", client_for(&ls, "l"), "DigUno");
+        g.add_follower("f1", client_for(&f1, "f1"), "DigUno");
         let report = g.check_sync_health().await.unwrap();
         assert!(report.healthy);
     }
 
     #[tokio::test]
     async fn test_force_resync() {
-        let g = make_group();
+        let (g, _ls, f1, f2) = make_group().await;
+        // force_resync activates preset 3 on all followers.
+        for srv in [&f1, &f2] {
+            Mock::given(method("POST"))
+                .and(path("/json/state"))
+                .and(body_json(serde_json::json!({"ps": 3})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+                .mount(srv)
+                .await;
+        }
+
         g.force_resync().await.unwrap();
-        // After resync, follower-2 (preset_slot=99) should now have preset_slot=3
-        let f2_state = g.get_follower("follower-2").unwrap()
-            .get_state().await.unwrap();
-        assert_eq!(f2_state.preset_slot, 3);
     }
 
-    #[test]
-    fn test_device_access() {
-        let g = make_group();
+    #[tokio::test]
+    async fn test_device_access() {
+        let (g, _ls, _f1, _f2) = make_group().await;
         assert!(g.get_device("leader-1").is_some());
         assert!(g.get_device("follower-1").is_some());
         assert!(g.get_device("nope").is_none());
