@@ -210,7 +210,7 @@ impl WledSyncGroup {
             .set_state(WledStateRequest {
                 segments: Some(vec![SegmentRequest {
                     id: Some(channel - 1),
-                    colors: Some(vec![[r, g, b], [0, 0, 0], [0, 0, 0]]),
+                    colors: Some(vec![vec![r, g, b], vec![0, 0, 0], vec![0, 0, 0]]),
                     ..Default::default()
                 }]),
                 ..Default::default()
@@ -387,7 +387,7 @@ mod tests {
             preset_slot: 3,
             segments: vec![Segment {
                 id: 0,
-                colors: vec![[255, 0, 0], [0, 0, 0], [0, 0, 0]],
+                colors: vec![vec![255, 0, 0], vec![0, 0, 0], vec![0, 0, 0]],
                 ..Default::default()
             }],
             ..Default::default()

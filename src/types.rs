@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// RGB color [r, g, b]
-pub type Color = [u8; 3];
+/// RGB or RGBW color vector ([r, g, b] or [r, g, b, w]).
+pub type Color = Vec<u8>;
 
 fn default_brightness() -> u8 {
     128

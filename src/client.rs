@@ -274,7 +274,7 @@ impl WledClient {
         self.set_state(WledStateRequest {
             segments: Some(vec![SegmentRequest {
                 id: Some(0),
-                colors: Some(vec![[r, g, b], [0, 0, 0], [0, 0, 0]]),
+                colors: Some(vec![vec![r, g, b], vec![0, 0, 0], vec![0, 0, 0]]),
                 ..Default::default()
             }]),
             ..Default::default()
@@ -329,7 +329,13 @@ impl WledClient {
     /// Returns all presets keyed by their integer slot ID.
     #[tracing::instrument(skip(self), fields(device = %self.device_name()))]
     pub async fn list_presets(&self) -> Result<HashMap<i32, PresetInfo>, WledError> {
-        self.inner.get_with_retry("/json/presets").await
+        match self.inner.get_with_retry("/json/presets").await {
+            Ok(presets) => Ok(presets),
+            Err(WledError::Api { status: 501, .. }) => {
+                self.inner.get_with_retry("/presets.json").await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Activates a preset by slot ID.
@@ -626,6 +632,93 @@ mod tests {
         assert_eq!(result.effects.len(), 2);
     }
 
+    // ── RGBW color deserialization (regression tests) ─────────────────────────
+
+    #[tokio::test]
+    async fn test_get_state_rgbw_colors() {
+        let server = MockServer::start().await;
+        // Dig2Go-Audioreactive RGBW devices return 4-element color arrays.
+        let body = serde_json::json!({
+            "on": true,
+            "bri": 56,
+            "seg": [{
+                "id": 0,
+                "start": 0,
+                "stop": 300,
+                "col": [[27, 179, 9, 0], [255, 18, 18, 0], [0, 0, 0, 0]],
+                "fx": 110,
+                "sx": 8,
+                "ix": 22,
+                "pal": 53
+            }]
+        });
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await.unwrap();
+        assert!(result.on);
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(result.segments[0].colors.len(), 3);
+        assert_eq!(result.segments[0].colors[0], vec![27, 179, 9, 0]);
+        assert_eq!(result.segments[0].colors[1], vec![255, 18, 18, 0]);
+        assert_eq!(result.segments[0].colors[2], vec![0, 0, 0, 0]);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_mixed_rgb_rgbw_segments() {
+        let server = MockServer::start().await;
+        // Segment 0 = RGB (3 elements), Segment 1 = RGBW (4 elements).
+        let body = serde_json::json!({
+            "on": true,
+            "bri": 128,
+            "seg": [
+                {
+                    "id": 0,
+                    "start": 0,
+                    "stop": 150,
+                    "col": [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+                },
+                {
+                    "id": 1,
+                    "start": 150,
+                    "stop": 300,
+                    "col": [[255, 0, 0, 128], [0, 255, 0, 0], [0, 0, 255, 0]]
+                }
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await.unwrap();
+        assert_eq!(result.segments.len(), 2);
+        assert_eq!(result.segments[0].colors[0], vec![255, 0, 0]);
+        assert_eq!(result.segments[1].colors[0], vec![255, 0, 0, 128]);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_empty_colors() {
+        let server = MockServer::start().await;
+        // Edge case: WLED may send empty color arrays in unusual states.
+        let body = serde_json::json!({
+            "on": false,
+            "seg": [{"id": 0, "start": 0, "stop": 100, "col": []}]
+        });
+        Mock::given(method("GET"))
+            .and(path("/json/state"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).get_state().await.unwrap();
+        assert_eq!(result.segments[0].colors.len(), 0);
+    }
+
     // ── GET /json/effects ─────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -712,6 +805,35 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[&1].name, "Warm White");
         assert_eq!(result[&2].name, "Party Mode");
+    }
+
+    #[tokio::test]
+    async fn test_list_presets_fallback_501() {
+        let server = MockServer::start().await;
+        let mut presets = HashMap::new();
+        presets.insert(
+            3,
+            PresetInfo {
+                name: "Evening Mode".to_string(),
+                ..Default::default()
+            },
+        );
+        // /json/presets returns 501 (WLED 0.15.3 QuinLED behavior).
+        Mock::given(method("GET"))
+            .and(path("/json/presets"))
+            .respond_with(ResponseTemplate::new(501).set_body_json(&serde_json::json!({"error": 4})))
+            .mount(&server)
+            .await;
+        // Fallback endpoint /presets.json succeeds.
+        Mock::given(method("GET"))
+            .and(path("/presets.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&presets))
+            .mount(&server)
+            .await;
+
+        let result = client_for(&server).list_presets().await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[&3].name, "Evening Mode");
     }
 
     // ── POST /json/state ──────────────────────────────────────────────────────
